@@ -1,4 +1,4 @@
-﻿# Customer Churn Prediction — Production MLOps System
+# Customer Churn Prediction — Production MLOps System
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -37,7 +37,8 @@ An end-to-end, production-grade supervised machine learning system engineered to
     - [3. Run FastAPI REST Microservice](#3-run-fastapi-rest-microservice)
     - [4. Launch Interactive Streamlit App](#4-launch-interactive-streamlit-app)
     - [5. Run Automated Pytest Suite](#5-run-automated-pytest-suite)
-    - [6. Docker Container Deployment](#6-docker-container-deployment)
+    - [6. Full-Stack Orchestration with Docker Compose](#6-full-stack-orchestration-with-docker-compose)
+    - [7. Developer Makefile Shortcuts](#7-developer-makefile-shortcuts)
 12. [Project Deliverables Checklist](#-project-deliverables-checklist)
 13. [Author & Acknowledgments](#-author--acknowledgments)
 
@@ -172,8 +173,10 @@ customer-churn-prediction/
 │       ├── roc_curves.png
 │       └── feature_importance.png
 │
+├── docker-compose.yml              # Multi-container orchestration (FastAPI + Streamlit)
 ├── Dockerfile                      # Multi-stage container build (python:3.11-slim)
 ├── .dockerignore                   # Build context exclusions
+├── Makefile                        # Developer CLI shortcuts (train, test, docker, etc.)
 ├── pyproject.toml                  # Ruff linter configuration
 ├── pytest.ini                      # Pytest discovery configuration
 ├── requirements.txt                # Production dependency specifications
@@ -306,13 +309,34 @@ Open [http://localhost:8501](http://localhost:8501) to explore the visual retent
 pytest -v
 ```
 
-### 6. Docker Container Deployment
+### 6. Full-Stack Orchestration with Docker Compose
+Spin up both the FastAPI REST service (port 8000) and the Streamlit dashboard (port 8501) concurrently:
 ```bash
-# Build multi-stage container
-docker build -t customer-churn-api .
+# Build and launch both services in detached mode
+docker compose up --build -d
 
-# Run container on port 8000
-docker run -d -p 8000:8000 --name churn-service customer-churn-api
+# Check service health and logs
+docker compose ps
+docker compose logs -f
+
+# Shut down services
+docker compose down
+```
+
+### 7. Developer Makefile Shortcuts
+Standardize common development and operational tasks using the included `Makefile`:
+```bash
+make help         # View formatted list of all available commands
+make install      # Upgrade pip and install all project dependencies
+make train        # Execute 5-fold CV training pipeline and serialize model
+make evaluate     # Run financial threshold optimization & generate profit curve
+make test         # Run complete automated pytest suite
+make lint         # Run Ruff static code analysis
+make format       # Auto-fix linting issues with Ruff
+make run-api      # Start FastAPI Uvicorn server on port 8000 with auto-reload
+make run-ui       # Start Streamlit dashboard on port 8501
+make docker-up    # Launch both services via Docker Compose
+make docker-down  # Stop all Docker Compose services
 ```
 
 ---

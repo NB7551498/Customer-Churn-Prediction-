@@ -1,0 +1,55 @@
+﻿# ==============================================================================
+# Docker Compose: Customer Churn Prediction System
+# Orchestrates FastAPI REST API (port 8000) & Streamlit UI (port 8501)
+# ==============================================================================
+
+version: "3.8"
+
+services:
+  # ----------------------------------------------------------------------------
+  # FastAPI REST Inference Service
+  # ----------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: churn-api-service
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PORT=8000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - churn-network
+
+  # ----------------------------------------------------------------------------
+  # Streamlit Interactive Retention Web Dashboard
+  # ----------------------------------------------------------------------------
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: churn-ui-service
+    command: ["streamlit", "run", "app/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+    ports:
+      - "8501:8501"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - API_URL=http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - churn-network
+
+networks:
+  churn-network:
+    driver: bridge
