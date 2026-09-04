@@ -1,0 +1,30 @@
+﻿# Version control
+.git/
+.gitignore
+
+# Python caches and environments
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Notebooks and exploratory reports
+notebooks/
+reports/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary files
+*.log
+scratch/

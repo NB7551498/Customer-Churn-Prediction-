@@ -1,191 +1,204 @@
 ﻿"""
-Model Evaluation and Diagnostic Module for Customer Churn Prediction.
-Evaluates model performance on the untouched test set, generates diagnostic visualizations
-(Confusion Matrices, ROC Curves, Feature Importance, Model Comparison Table), and logs results.
+Financial Threshold Optimization & Evaluation Module.
+Evaluates model performance through a financial cost-benefit lens, determining
+the decision threshold that maximizes net dollar value rather than naive accuracy.
 """
 
-import os
+import json
+import logging
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
 import joblib
-import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
+import numpy as np
+import pandas as pd
+from sklearn.metrics import confusion_matrix, roc_auc_score
+from sklearn.pipeline import Pipeline
 
-from sklearn.metrics import (
-    accuracy_score, precision_score, recall_score, f1_score, roc_auc_score,
-    confusion_matrix, roc_curve, classification_report
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[logging.StreamHandler()],
 )
+logger = logging.getLogger("churn.evaluate")
 
-from data_preprocessing import load_raw_data, clean_data, split_data
-
-
-plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
-FIGURES_DIR = os.path.join("reports", "figures")
-REPORTS_DIR = "reports"
-MODELS_DIR = "models"
-os.makedirs(FIGURES_DIR, exist_ok=True)
-os.makedirs(REPORTS_DIR, exist_ok=True)
+# Financial Cost-Benefit Assumptions
+VALUE_TRUE_POSITIVE: float = 550.0   # Net customer lifetime value saved from retention
+COST_FALSE_POSITIVE: float = -50.0    # Cost of retention incentive offered to retained customer
+LOSS_FALSE_NEGATIVE: float = -600.0  # Gross lost recurring revenue from undetected churner
+VALUE_TRUE_NEGATIVE: float = 0.0     # Retained customer uncontacted (no intervention, no cost)
 
 
-def evaluate_models():
-    # 1. Load test data
-    if os.path.exists("data/processed/X_test.parquet") and os.path.exists("data/processed/y_test.parquet"):
-        X_test = pd.read_parquet("data/processed/X_test.parquet")
-        y_test = pd.read_parquet("data/processed/y_test.parquet")['Churn']
-    else:
-        df_raw = load_raw_data("data/customer_churn.csv")
-        df_clean, X, y = clean_data(df_raw)
-        _, X_test, _, y_test = split_data(X, y, test_size=0.20, random_state=42)
+def compute_net_profit(
+    y_true: np.ndarray,
+    y_prob: np.ndarray,
+    threshold: float,
+    val_tp: float = VALUE_TRUE_POSITIVE,
+    cost_fp: float = COST_FALSE_POSITIVE,
+    loss_fn: float = LOSS_FALSE_NEGATIVE,
+) -> Tuple[float, int, int, int, int]:
+    """
+    Compute net financial return for a specific decision threshold.
 
-    # 2. Load trained models
-    models_dict = joblib.load(os.path.join(MODELS_DIR, "all_models.pkl"))
+    Args:
+        y_true: Ground truth binary labels (0 or 1).
+        y_prob: Predicted churn probabilities in range [0, 1].
+        threshold: Decision cutoff threshold.
+        val_tp: Monetary gain for a True Positive.
+        cost_fp: Monetary penalty (negative) for a False Positive.
+        loss_fn: Monetary loss (negative) for a False Negative.
 
-    print("=" * 70)
-    print("STEP 11 & 15: MODEL EVALUATION ON UNTOUCHED TEST SET (N = 1,409)")
-    print("=" * 70)
+    Returns:
+        Tuple of (net_profit, TP, FP, FN, TN).
+    """
+    y_pred: np.ndarray = (y_prob >= threshold).astype(int)
+    cm: np.ndarray = confusion_matrix(y_true, y_pred, labels=[0, 1])
+    tn, fp, fn, tp = cm.ravel()
 
-    test_results = []
-    test_preds = {}
-    test_probs = {}
+    # Net Profit formula: TP * 550 + FP * (-50) + FN * (-600)
+    net_profit: float = float(tp * val_tp + fp * cost_fp + fn * loss_fn)
+    return net_profit, int(tp), int(fp), int(fn), int(tn)
 
-    for name, pipeline in models_dict.items():
-        y_pred = pipeline.predict(X_test)
-        y_prob = pipeline.predict_proba(X_test)[:, 1]
 
-        test_preds[name] = y_pred
-        test_probs[name] = y_prob
+def optimize_threshold(
+    y_true: np.ndarray,
+    y_prob: np.ndarray,
+    thresholds: Optional[np.ndarray] = None,
+) -> Dict[str, object]:
+    """
+    Iterate through probability thresholds from 0.10 to 0.90 to find the
+    financially optimal cutoff maximizing business profit.
 
-        acc = accuracy_score(y_test, y_pred)
-        prec = precision_score(y_test, y_pred)
-        rec = recall_score(y_test, y_pred)
-        f1 = f1_score(y_test, y_pred)
-        auc = roc_auc_score(y_test, y_prob)
+    Args:
+        y_true: Actual ground truth binary labels.
+        y_prob: Predicted churn probabilities.
+        thresholds: Array of thresholds to evaluate (defaults to 0.1 to 0.9 in 0.01 steps).
 
-        print(f"\nModel: {name}")
-        print("-" * 35)
-        print(f"Accuracy : {acc:.4f}")
-        print(f"Precision: {prec:.4f}")
-        print(f"Recall   : {rec:.4f}")
-        print(f"F1-Score : {f1:.4f}")
-        print(f"ROC-AUC  : {auc:.4f}")
-        print("\nClassification Report:\n", classification_report(y_test, y_pred, target_names=['Retained (0)', 'Churn (1)']))
+    Returns:
+        Dictionary containing optimization results, best threshold, and financial comparisons.
+    """
+    if thresholds is None:
+        thresholds = np.linspace(0.10, 0.90, 81)
 
-        test_results.append({
-            'Model': name,
-            'Accuracy': acc,
-            'Precision': prec,
-            'Recall': rec,
-            'F1-Score': f1,
-            'ROC-AUC': auc
+    logger.info("Evaluating financial outcomes across %d candidate thresholds (0.10 to 0.90)...", len(thresholds))
+
+    results: List[Dict[str, float]] = []
+    best_profit: float = -float("inf")
+    best_threshold: float = 0.50
+    best_cm: Tuple[int, int, int, int] = (0, 0, 0, 0)
+
+    for t in thresholds:
+        profit, tp, fp, fn, tn = compute_net_profit(y_true, y_prob, float(t))
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+
+        results.append({
+            "threshold": float(t),
+            "net_profit": profit,
+            "tp": tp,
+            "fp": fp,
+            "fn": fn,
+            "tn": tn,
+            "recall": recall,
+            "precision": precision,
         })
 
-    results_df = pd.DataFrame(test_results)
-    results_df.to_csv(os.path.join(REPORTS_DIR, "test_metrics_summary.csv"), index=False)
+        if profit > best_profit:
+            best_profit = profit
+            best_threshold = float(t)
+            best_cm = (tp, fp, fn, tn)
 
-    print("\n" + "=" * 70)
-    print("MODEL COMPARISON SUMMARY TABLE")
-    print("=" * 70)
-    print(results_df.to_string(index=False))
+    # Baseline 0.50 evaluation for comparison
+    default_profit, def_tp, def_fp, def_fn, def_tn = compute_net_profit(y_true, y_prob, 0.50)
+    profit_delta = best_profit - default_profit
 
-    # 3. Generate Confusion Matrices Plot
-    fig, axes = plt.subplots(1, len(models_dict), figsize=(5.5 * len(models_dict), 4.5))
-    if len(models_dict) == 1:
-        axes = [axes]
+    logger.info("=" * 65)
+    logger.info("FINANCIAL THRESHOLD OPTIMIZATION RESULTS")
+    logger.info("=" * 65)
+    logger.info("Default Threshold (0.50) Net Value: $%.2f (TP: %d, FP: %d, FN: %d)", default_profit, def_tp, def_fp, def_fn)
+    logger.info("Optimal Threshold (%.2f) Net Value: $%.2f (TP: %d, FP: %d, FN: %d)", best_threshold, best_profit, best_cm[0], best_cm[1], best_cm[2])
+    logger.info("Net Financial Gain from Tuning: +$%.2f", profit_delta)
+    logger.info("=" * 65)
 
-    for idx, (name, _) in enumerate(models_dict.items()):
-        cm = confusion_matrix(y_test, test_preds[name])
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=axes[idx],
-                    xticklabels=['Retained (0)', 'Churn (1)'],
-                    yticklabels=['Retained (0)', 'Churn (1)'],
-                    annot_kws={'size': 13, 'weight': 'bold'})
-        axes[idx].set_title(f"{name}", fontsize=12, fontweight='bold')
-        axes[idx].set_xlabel("Predicted Label", fontsize=11)
-        axes[idx].set_ylabel("True Label", fontsize=11)
+    return {
+        "best_threshold": best_threshold,
+        "best_profit": best_profit,
+        "best_tp": best_cm[0],
+        "best_fp": best_cm[1],
+        "best_fn": best_cm[2],
+        "best_tn": best_cm[3],
+        "default_threshold": 0.50,
+        "default_profit": default_profit,
+        "profit_delta": profit_delta,
+        "threshold_curve": results,
+    }
 
+
+def plot_profit_curve(optimization_results: Dict[str, object], output_path: Path) -> None:
+    """Plot and save financial profit vs threshold optimization curve."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    curve_data: List[Dict[str, float]] = optimization_results["threshold_curve"]  # type: ignore
+    df_curve = pd.DataFrame(curve_data)
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(df_curve["threshold"], df_curve["net_profit"], color="#1e3a8a", lw=2.5, label="Net Financial Value ($)")
+
+    best_t: float = optimization_results["best_threshold"]  # type: ignore
+    best_p: float = optimization_results["best_profit"]      # type: ignore
+    def_p: float = optimization_results["default_profit"]    # type: ignore
+
+    plt.axvline(best_t, color="#10b981", linestyle="--", lw=2, label=f"Optimal Cutoff (t = {best_t:.2f}, ${best_p:,.0f})")
+    plt.axvline(0.50, color="#ef4444", linestyle=":", lw=2, label=f"Default Naive Cutoff (t = 0.50, ${def_p:,.0f})")
+
+    plt.title("Business Value vs. Classification Probability Threshold", fontsize=13, fontweight="bold")
+    plt.xlabel("Decision Probability Threshold", fontsize=11)
+    plt.ylabel("Net Portfolio Return ($USD)", fontsize=11)
+    plt.legend(loc="lower center", fontsize=10)
     plt.tight_layout()
-    cm_path = os.path.join(FIGURES_DIR, "confusion_matrices.png")
-    plt.savefig(cm_path, dpi=300)
+    plt.savefig(output_path, dpi=300)
     plt.close()
-    print(f"\nSaved confusion matrices to: {cm_path}")
-
-    # 4. Generate Comparative ROC Curves
-    plt.figure(figsize=(8.5, 6.5))
-    palette = ['#2b5c8f', '#2ca02c', '#d95f02', '#9467bd']
-
-    for idx, (name, _) in enumerate(models_dict.items()):
-        fpr, tpr, _ = roc_curve(y_test, test_probs[name])
-        auc = roc_auc_score(y_test, test_probs[name])
-        plt.plot(fpr, tpr, label=f"{name} (AUC = {auc:.3f})", color=palette[idx % len(palette)], lw=2.5)
-
-    plt.plot([0, 1], [0, 1], 'k--', lw=1.5, label='Random Chance (AUC = 0.500)')
-    plt.xlim([-0.01, 1.0])
-    plt.ylim([0.0, 1.02])
-    plt.xlabel("False Positive Rate (1 - Specificity)", fontsize=12)
-    plt.ylabel("True Positive Rate (Sensitivity / Recall)", fontsize=12)
-    plt.title("Comparative ROC Curves (Test Set)", fontsize=14, fontweight='bold')
-    plt.legend(loc='lower right', fontsize=11, frameon=True)
-    plt.tight_layout()
-    roc_path = os.path.join(FIGURES_DIR, "roc_curves.png")
-    plt.savefig(roc_path, dpi=300)
-    plt.close()
-    print(f"Saved ROC curves to: {roc_path}")
-
-    # 5. Feature Importance Analysis
-    best_pipe = models_dict['Tuned Random Forest']
-    preprocessor = best_pipe.named_steps['preprocessor']
-    classifier = best_pipe.named_steps['classifier']
-    feature_names = preprocessor.get_feature_names_out()
-
-    importances = classifier.feature_importances_
-    feat_df = pd.DataFrame({
-        'Feature': feature_names,
-        'Importance': importances
-    }).sort_values(by='Importance', ascending=False)
-    feat_df.to_csv(os.path.join(REPORTS_DIR, "feature_importance.csv"), index=False)
-
-    plt.figure(figsize=(10, 7))
-    top15 = feat_df.head(15)
-    sns.barplot(data=top15, x='Importance', y='Feature', palette='mako')
-    plt.title("Top 15 Predictive Features (Tuned Random Forest)", fontsize=14, fontweight='bold')
-    plt.xlabel("Gini Feature Importance", fontsize=12)
-    plt.ylabel("Engineered Feature", fontsize=12)
-    for p in plt.gca().patches:
-        w = p.get_width()
-        plt.gca().text(w + 0.002, p.get_y() + p.get_height()/2, f"{w:.3f}",
-                       va='center', fontsize=10, fontweight='bold')
-    plt.tight_layout()
-    fi_path = os.path.join(FIGURES_DIR, "feature_importance.png")
-    plt.savefig(fi_path, dpi=300)
-    plt.close()
-    print(f"Saved feature importance chart to: {fi_path}")
-
-    # 6. Logistic Regression Coefficients Analysis
-    lr_pipe = models_dict['Logistic Regression']
-    lr_clf = lr_pipe.named_steps['classifier']
-    lr_coefs = lr_clf.coef_[0]
-    coef_df = pd.DataFrame({
-        'Feature': feature_names,
-        'Coefficient': lr_coefs
-    }).sort_values(by='Coefficient', ascending=False)
-
-    top_pos = coef_df.head(7)
-    top_neg = coef_df.tail(7)
-    key_coefs = pd.concat([top_pos, top_neg]).sort_values(by='Coefficient')
-
-    plt.figure(figsize=(10, 7))
-    colors = ['#2ca02c' if c < 0 else '#d95f02' for c in key_coefs['Coefficient']]
-    plt.barh(key_coefs['Feature'], key_coefs['Coefficient'], color=colors)
-    plt.title("Key Logistic Regression Coefficients (Log-Odds Impact on Churn)", fontsize=13, fontweight='bold')
-    plt.xlabel("Coefficient Value (Positive = Increases Churn, Negative = Reduces Churn)", fontsize=11)
-    plt.axvline(0, color='black', linestyle='--', alpha=0.7)
-    plt.tight_layout()
-    lr_coef_path = os.path.join(FIGURES_DIR, "logistic_coefficients.png")
-    plt.savefig(lr_coef_path, dpi=300)
-    plt.close()
-    print(f"Saved Logistic Regression coefficients to: {lr_coef_path}")
-
-    return results_df
+    logger.info("Saved financial threshold optimization chart to %s", output_path)
 
 
-if __name__ == '__main__':
-    evaluate_models()
+def run_evaluation(
+    model_path: Path = Path("models/pipeline.joblib"),
+    test_features_path: Path = Path("data/processed/X_test.parquet"),
+    test_target_path: Path = Path("data/processed/y_test.parquet"),
+) -> Dict[str, object]:
+    """Load model and test set, compute ROC-AUC, and execute financial threshold optimization."""
+    logger.info("Loading model from %s", model_path)
+    if not model_path.exists():
+        raise FileNotFoundError(f"Model artifact not found at {model_path}")
+
+    pipeline: Pipeline = joblib.load(model_path)
+    X_test: pd.DataFrame = pd.read_parquet(test_features_path)
+    y_test: np.ndarray = pd.read_parquet(test_target_path)["Churn"].values
+
+    y_prob: np.ndarray = pipeline.predict_proba(X_test)[:, 1]
+    auc_score: float = float(roc_auc_score(y_test, y_prob))
+    logger.info("Evaluated Test Set (N = %d) | ROC-AUC: %.4f", len(y_test), auc_score)
+
+    opt_results = optimize_threshold(y_test, y_prob)
+    opt_results["test_roc_auc"] = auc_score
+
+    # Save threshold configuration for serving layer
+    config_path = Path("models/optimal_threshold.json")
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump({
+            "optimal_threshold": opt_results["best_threshold"],
+            "optimal_profit": opt_results["best_profit"],
+            "default_profit": opt_results["default_profit"],
+            "profit_gain": opt_results["profit_delta"],
+            "roc_auc": auc_score,
+        }, f, indent=2)
+    logger.info("Saved optimal threshold configuration to %s", config_path)
+
+    plot_profit_curve(opt_results, Path("reports/figures/financial_threshold_curve.png"))
+    return opt_results
+
+
+if __name__ == "__main__":
+    run_evaluation()

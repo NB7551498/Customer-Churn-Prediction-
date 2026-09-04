@@ -1,178 +1,229 @@
 ﻿"""
-Model Training Module for Customer Churn Prediction
-Implements Logistic Regression, Random Forest, 5-Fold Stratified Cross-Validation,
-Hyperparameter Optimization (GridSearchCV), and Final Model Serialization.
+Production-grade Training Pipeline for Customer Churn Prediction.
+Encapsulates data loading, cleaning, stratified splitting, preprocessing,
+model fitting, and artifact serialization with strict type hints and logging.
 """
 
-import os
+import logging
+from pathlib import Path
+from typing import Dict, List, Tuple
+
 import joblib
-import pandas as pd
 import numpy as np
+import pandas as pd
+from sklearn.compose import ColumnTransformer
+from sklearn.model_selection import StratifiedKFold, cross_validate, train_test_split
 from sklearn.pipeline import Pipeline
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import StratifiedKFold, cross_validate, GridSearchCV
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-from data_preprocessing import load_raw_data, clean_data, get_preprocessor, split_data
+# Graceful import of XGBClassifier with fallback to HistGradientBoostingClassifier
+try:
+    from xgboost import XGBClassifier
+    DEFAULT_CLASSIFIER = XGBClassifier(
+        n_estimators=150,
+        max_depth=5,
+        learning_rate=0.08,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        eval_metric="logloss",
+        random_state=42,
+    )
+    CLASSIFIER_NAME = "XGBClassifier"
+except ImportError:
+    from sklearn.ensemble import HistGradientBoostingClassifier
+    DEFAULT_CLASSIFIER = HistGradientBoostingClassifier(
+        max_iter=150,
+        max_depth=6,
+        learning_rate=0.08,
+        random_state=42,
+    )
+    CLASSIFIER_NAME = "HistGradientBoostingClassifier"
 
 
-MODELS_DIR = "models"
-REPORTS_DIR = "reports"
-os.makedirs(MODELS_DIR, exist_ok=True)
-os.makedirs(REPORTS_DIR, exist_ok=True)
+# Configure structured logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[logging.StreamHandler()],
+)
+logger = logging.getLogger("churn.train")
+
+# Feature declarations
+NUMERICAL_FEATURES: List[str] = ["tenure", "MonthlyCharges", "TotalCharges"]
+
+CATEGORICAL_FEATURES: List[str] = [
+    "gender",
+    "SeniorCitizen",
+    "Partner",
+    "Dependents",
+    "PhoneService",
+    "MultipleLines",
+    "InternetService",
+    "OnlineSecurity",
+    "OnlineBackup",
+    "DeviceProtection",
+    "TechSupport",
+    "StreamingTV",
+    "StreamingMovies",
+    "Contract",
+    "PaperlessBilling",
+    "PaymentMethod",
+]
+
+TARGET_COLUMN: str = "Churn"
+DEFAULT_DATA_PATH: Path = Path("data/customer_churn.csv")
+DEFAULT_MODEL_DIR: Path = Path("models")
 
 
-def get_base_models(preprocessor):
-    """Define candidate model pipelines."""
-    return {
-        'Logistic Regression': Pipeline([
-            ('preprocessor', preprocessor),
-            ('classifier', LogisticRegression(class_weight='balanced', max_iter=1000, random_state=42))
-        ]),
-        'Random Forest': Pipeline([
-            ('preprocessor', preprocessor),
-            ('classifier', RandomForestClassifier(n_estimators=150, max_depth=8, class_weight='balanced', random_state=42))
-        ])
-    }
-
-
-def perform_cross_validation(models: dict, X_train: pd.DataFrame, y_train: pd.Series) -> pd.DataFrame:
+def load_and_preprocess_raw_data(data_path: Path) -> Tuple[pd.DataFrame, pd.Series]:
     """
-    Perform 5-Fold Stratified Cross-Validation on training data.
-    Evaluates Accuracy, Precision, Recall, F1, and ROC-AUC.
+    Load dataset from CSV, clean TotalCharges anomalies, drop arbitrary identifiers,
+    and separate features from the binary target.
+
+    Args:
+        data_path: Path to raw customer churn CSV.
+
+    Returns:
+        Tuple of (X: feature matrix DataFrame, y: binary target Series).
     """
-    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-    scoring = {
-        'accuracy': 'accuracy',
-        'precision': 'precision',
-        'recall': 'recall',
-        'f1': 'f1',
-        'roc_auc': 'roc_auc'
-    }
+    logger.info("Loading raw dataset from %s", data_path)
+    if not data_path.exists():
+        raise FileNotFoundError(f"Dataset file not found at {data_path.resolve()}")
 
-    cv_summary = []
-    print("=" * 65)
-    print("STEP 10: 5-FOLD STRATIFIED CROSS-VALIDATION")
-    print("=" * 65)
+    df: pd.DataFrame = pd.read_csv(data_path)
+    logger.info("Raw dataset loaded: %d rows, %d columns", len(df), len(df.columns))
 
-    for name, pipeline in models.items():
-        print(f"Evaluating {name} with 5-Fold Stratified CV...")
-        scores = cross_validate(pipeline, X_train, y_train, cv=cv, scoring=scoring, n_jobs=-1)
-        
-        row = {
-            'Model': name,
-            'CV_Accuracy_Mean': scores['test_accuracy'].mean(),
-            'CV_Accuracy_Std': scores['test_accuracy'].std(),
-            'CV_Precision_Mean': scores['test_precision'].mean(),
-            'CV_Precision_Std': scores['test_precision'].std(),
-            'CV_Recall_Mean': scores['test_recall'].mean(),
-            'CV_Recall_Std': scores['test_recall'].std(),
-            'CV_F1_Mean': scores['test_f1'].mean(),
-            'CV_F1_Std': scores['test_f1'].std(),
-            'CV_ROC_AUC_Mean': scores['test_roc_auc'].mean(),
-            'CV_ROC_AUC_Std': scores['test_roc_auc'].std(),
-        }
-        cv_summary.append(row)
-        print(f"  -> Accuracy : {row['CV_Accuracy_Mean']:.4f} (+/- {row['CV_Accuracy_Std']:.4f})")
-        print(f"  -> Precision: {row['CV_Precision_Mean']:.4f} (+/- {row['CV_Precision_Std']:.4f})")
-        print(f"  -> Recall   : {row['CV_Recall_Mean']:.4f} (+/- {row['CV_Recall_Std']:.4f})")
-        print(f"  -> F1-Score : {row['CV_F1_Mean']:.4f} (+/- {row['CV_F1_Std']:.4f})")
-        print(f"  -> ROC-AUC  : {row['CV_ROC_AUC_Mean']:.4f} (+/- {row['CV_ROC_AUC_Std']:.4f})")
+    # TotalCharges contains whitespace strings for tenure=0 records
+    df["TotalCharges"] = pd.to_numeric(
+        df["TotalCharges"].astype(str).str.strip(), errors="coerce"
+    ).fillna(0.0)
 
-    cv_df = pd.DataFrame(cv_summary)
-    cv_df.to_csv(os.path.join(REPORTS_DIR, "cv_metrics_summary.csv"), index=False)
-    return cv_df
+    # Drop non-predictive identifier
+    if "customerID" in df.columns:
+        df = df.drop(columns=["customerID"])
+
+    # Cast SeniorCitizen to string category
+    df["SeniorCitizen"] = df["SeniorCitizen"].astype(str)
+
+    y: pd.Series = (df[TARGET_COLUMN] == "Yes").astype(int)
+    X: pd.DataFrame = df.drop(columns=[TARGET_COLUMN])
+
+    churn_rate: float = float(y.mean() * 100)
+    logger.info("Features extracted: %d columns | Churn prevalence: %.2f%%", X.shape[1], churn_rate)
+    return X, y
 
 
-def tune_random_forest(preprocessor, X_train: pd.DataFrame, y_train: pd.Series):
+def build_pipeline() -> Pipeline:
     """
-    Tune Random Forest hyperparameters using GridSearchCV with Stratified 5-Fold CV.
-    Target metric: ROC-AUC.
+    Build leak-proof Scikit-Learn Pipeline combining ColumnTransformer
+    (StandardScaler + OneHotEncoder) with the gradient boosted classifier.
+
+    Returns:
+        Assembled Pipeline ready for fitting.
     """
-    print("\n" + "=" * 65)
-    print("STEP 12: HYPERPARAMETER TUNING (RANDOM FOREST)")
-    print("=" * 65)
-
-    rf_pipe = Pipeline([
-        ('preprocessor', preprocessor),
-        ('classifier', RandomForestClassifier(random_state=42, class_weight='balanced'))
-    ])
-
-    param_grid = {
-        'classifier__n_estimators': [100, 200],
-        'classifier__max_depth': [6, 8, 12],
-        'classifier__min_samples_split': [2, 5],
-        'classifier__min_samples_leaf': [1, 2]
-    }
-
-    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-    grid_search = GridSearchCV(
-        rf_pipe,
-        param_grid=param_grid,
-        scoring='roc_auc',
-        cv=cv,
-        n_jobs=-1,
-        verbose=1
+    preprocessor: ColumnTransformer = ColumnTransformer(
+        transformers=[
+            ("num", StandardScaler(), NUMERICAL_FEATURES),
+            (
+                "cat",
+                OneHotEncoder(drop="first", handle_unknown="ignore", sparse_output=False),
+                CATEGORICAL_FEATURES,
+            ),
+        ],
+        remainder="drop",
+        verbose_feature_names_out=False,
     )
 
-    print("Running GridSearchCV...")
-    grid_search.fit(X_train, y_train)
+    pipeline: Pipeline = Pipeline(
+        steps=[
+            ("preprocessor", preprocessor),
+            ("classifier", DEFAULT_CLASSIFIER),
+        ]
+    )
+    logger.info("Assembled Pipeline with ColumnTransformer and %s", CLASSIFIER_NAME)
+    return pipeline
 
-    print(f"Best CV ROC-AUC: {grid_search.best_score_:.4f}")
-    print("Optimal Parameters:")
-    for k, v in grid_search.best_params_.items():
-        print(f"  {k}: {v}")
 
-    return grid_search.best_estimator_, grid_search.best_params_, grid_search.best_score_
+def run_training_pipeline(
+    data_path: Path = DEFAULT_DATA_PATH,
+    model_dir: Path = DEFAULT_MODEL_DIR,
+    test_size: float = 0.20,
+    random_state: int = 42,
+) -> Tuple[Pipeline, Dict[str, float]]:
+    """
+    Execute full training workflow: load, split, 5-fold CV, fit, and serialize.
 
+    Args:
+        data_path: Path to customer CSV.
+        model_dir: Target directory to save serialized pipeline.
+        test_size: Ratio for train-test split (default 0.20).
+        random_state: Random seed for reproducibility.
 
-def train_and_save():
-    """Main training orchestration."""
-    # 1. Load and split
-    df_raw = load_raw_data("data/customer_churn.csv")
-    df_clean, X, y = clean_data(df_raw)
-    X_train, X_test, y_train, y_test = split_data(X, y, test_size=0.20, random_state=42)
+    Returns:
+        Tuple of (fitted Pipeline, cross-validation metrics dict).
+    """
+    X, y = load_and_preprocess_raw_data(data_path)
 
-    # Cache split datasets for evaluate.py
-    os.makedirs("data/processed", exist_ok=True)
-    X_train.to_parquet("data/processed/X_train.parquet", index=False)
-    X_test.to_parquet("data/processed/X_test.parquet", index=False)
-    y_train.to_frame('Churn').to_parquet("data/processed/y_train.parquet", index=False)
-    y_test.to_frame('Churn').to_parquet("data/processed/y_test.parquet", index=False)
+    # Stratified split to preserve class distribution
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_size, stratify=y, random_state=random_state
+    )
+    logger.info("Split completed: %d train samples, %d test samples", len(X_train), len(X_test))
 
-    preprocessor = get_preprocessor()
-    base_models = get_base_models(preprocessor)
+    # Cache split partitions for evaluate.py
+    processed_dir = Path("data/processed")
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    X_test.to_parquet(processed_dir / "X_test.parquet", index=False)
+    y_test.to_frame("Churn").to_parquet(processed_dir / "y_test.parquet", index=False)
 
-    # 2. Cross-Validation on Baseline Models
-    cv_results = perform_cross_validation(base_models, X_train, y_train)
+    pipeline: Pipeline = build_pipeline()
 
-    # 3. Fit base models on training data and serialize for evaluation
-    trained_base_models = {}
-    for name, pipe in base_models.items():
-        pipe.fit(X_train, y_train)
-        trained_base_models[name] = pipe
-
-    # 4. Hyperparameter Tuning
-    best_model, best_params, best_cv_auc = tune_random_forest(preprocessor, X_train, y_train)
-
-    # 5. Fit best model on complete training data (Pipeline fits preprocessor + model together)
-    print("\nFitting final optimized pipeline on complete training set...")
-    best_model.fit(X_train, y_train)
-
-    # 6. Save final model & baseline models
-    best_model_path = os.path.join(MODELS_DIR, "best_model.pkl")
-    joblib.dump(best_model, best_model_path)
-    print(f"Successfully serialized final best pipeline to: {best_model_path}")
-
-    # Also save dictionary of models for evaluation scripts
-    all_models = {
-        'Logistic Regression': trained_base_models['Logistic Regression'],
-        'Random Forest (Baseline)': trained_base_models['Random Forest'],
-        'Tuned Random Forest': best_model
+    # 5-Fold Stratified Cross-Validation
+    logger.info("Running 5-Fold Stratified Cross-Validation...")
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=random_state)
+    scoring: Dict[str, str] = {
+        "accuracy": "accuracy",
+        "precision": "precision",
+        "recall": "recall",
+        "f1": "f1",
+        "roc_auc": "roc_auc",
     }
-    joblib.dump(all_models, os.path.join(MODELS_DIR, "all_models.pkl"))
-    print("Training phase complete.")
+    cv_scores = cross_validate(pipeline, X_train, y_train, cv=cv, scoring=scoring, n_jobs=-1)
+
+    metrics: Dict[str, float] = {
+        "cv_accuracy_mean": float(np.mean(cv_scores["test_accuracy"])),
+        "cv_accuracy_std": float(np.std(cv_scores["test_accuracy"])),
+        "cv_recall_mean": float(np.mean(cv_scores["test_recall"])),
+        "cv_recall_std": float(np.std(cv_scores["test_recall"])),
+        "cv_precision_mean": float(np.mean(cv_scores["test_precision"])),
+        "cv_f1_mean": float(np.mean(cv_scores["test_f1"])),
+        "cv_roc_auc_mean": float(np.mean(cv_scores["test_roc_auc"])),
+        "cv_roc_auc_std": float(np.std(cv_scores["test_roc_auc"])),
+    }
+
+    logger.info(
+        "CV Results: ROC-AUC: %.4f (+/- %.4f) | Recall: %.4f (+/- %.4f) | F1: %.4f",
+        metrics["cv_roc_auc_mean"],
+        metrics["cv_roc_auc_std"],
+        metrics["cv_recall_mean"],
+        metrics["cv_recall_std"],
+        metrics["cv_f1_mean"],
+    )
+
+    # Fit final pipeline on complete training set
+    logger.info("Fitting final pipeline on all %d training samples...", len(X_train))
+    pipeline.fit(X_train, y_train)
+
+    # Serialize single pipeline artifact
+    model_dir.mkdir(parents=True, exist_ok=True)
+    pipeline_path: Path = model_dir / "pipeline.joblib"
+    joblib.dump(pipeline, pipeline_path)
+    # Also save as best_model.pkl for compatibility
+    joblib.dump(pipeline, model_dir / "best_model.pkl")
+
+    logger.info("Model pipeline successfully serialized to %s", pipeline_path.resolve())
+    return pipeline, metrics
 
 
-if __name__ == '__main__':
-    train_and_save()
+if __name__ == "__main__":
+    run_training_pipeline()

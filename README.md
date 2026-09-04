@@ -1,4 +1,4 @@
-﻿# Customer Churn Prediction Using Machine Learning Classification Algorithms
+# Customer Churn Prediction Using Machine Learning Classification Algorithms
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Scikit-Learn](https://img.shields.io/badge/Scikit--Learn-1.3%2B-orange.svg)](https://scikit-learn.org/)
@@ -34,6 +34,64 @@ An end-to-end, production-ready supervised machine learning classification proje
 13. [Project Deliverables Checklist](#-project-deliverables-checklist)
 14. [Future Roadmap](#-future-roadmap)
 15. [Author & Acknowledgments](#-author--acknowledgments)
+
+---
+
+## 🚀 Production MLOps Engineering (4-Phase Architecture)
+
+This repository implements a production-grade MLOps system executed across 4 systematic engineering phases:
+
+```mermaid
+flowchart LR
+    A[Raw Data] --> B[Phase 1: Modular Pipeline]
+    B --> C[Phase 2: Financial Threshold Optimization]
+    C --> D[Phase 3: FastAPI & Pydantic Layer]
+    D --> E[Phase 4: Docker & GitHub Actions CI]
+```
+
+### Phase 1: Modular ML Pipeline (`src/train.py`)
+- Clean separation of concerns with full type hints and structured Python `logging`.
+- Leak-proof Scikit-Learn `Pipeline` combining `ColumnTransformer` (`StandardScaler` + `OneHotEncoder(drop='first', handle_unknown='ignore')`) with Gradient Boosting.
+- 5-Fold Stratified Cross-Validation on training data ($N = 5,634$) and serialization of single-artifact pipelines to `models/pipeline.joblib`.
+
+### Phase 2: Financial Threshold Optimization (`src/evaluate.py`)
+Standard models use an arbitrary 0.50 probability threshold, which is financially sub-optimal for subscription businesses. We implement a cost-benefit decision matrix:
+* **True Positive (Saved Churner):** +$550 net value
+* **False Positive (Unnecessary Retention Discount):** -$50 cost
+* **False Negative (Missed Churner):** -$600 gross loss
+
+$$\text{Net Profit} = (TP \times 550) + (FP \times -50) + (FN \times -600)$$
+
+Iterating across probability thresholds ($0.10 \le t \le 0.90$):
+* **Default Threshold ($t = 0.50$):** $-\$1,500.00$ Net Value
+* **Optimal Threshold ($t = 0.10$):** $+\$144,750.00$ Net Value
+* **Net Bottom-Line Gain:** **+$146,250.00**
+
+![Financial Threshold Optimization](reports/figures/financial_threshold_curve.png)
+
+### Phase 3: FastAPI & Pydantic Serving Layer (`app/main.py`, `app/schemas.py`)
+- High-performance asynchronous REST microservice using FastAPI and Pydantic v2.
+- Strict input validation schemas (`CustomerInput`) with domain boundaries (`0 <= tenure <= 120`, `0 <= MonthlyCharges <= 500`).
+- Lifespan state management (`@asynccontextmanager`) with graceful `503 Service Unavailable` handling on model unreadiness.
+- Real-time endpoints:
+  - `GET /health`: Liveness & model readiness probe
+  - `POST /predict`: Churn probability scoring, boolean decisioning, and risk-tier segmentation
+
+```bash
+# Start FastAPI server
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+### Phase 4: Containerization & CI/CD Pipeline
+- **Multi-Stage Dockerfile:** Uses `python:3.11-slim` builder and runtime stages for minimal image size and non-root security.
+- **Automated CI Workflow:** `.github/workflows/ci.yml` runs on every push and pull request to `main`, validating code with `ruff check .` and unit tests with `pytest -v`.
+- **Test Coverage:** Automated unit test suite in `tests/test_api.py` and `tests/test_pipeline.py`.
+
+```bash
+# Build and run with Docker
+docker build -t customer-churn-api .
+docker run -d -p 8000:8000 customer-churn-api
+```
 
 ---
 

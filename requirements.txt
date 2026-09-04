@@ -1,10 +1,25 @@
-﻿pandas>=2.0.0
+﻿# Core Data & ML
+pandas>=2.0.0
 numpy>=1.24.0
 scipy>=1.10.0
 scikit-learn>=1.3.0
+joblib>=1.3.0
+pyarrow>=14.0.0
+
+# Optional Gradient Boosting (falls back to HistGradientBoosting if absent)
+xgboost>=2.0.0
+
+# FastAPI Serving Layer
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+pydantic>=2.0.0
+
+# Testing & Code Quality
+pytest>=7.4.0
+httpx>=0.24.0
+ruff>=0.1.0
+
+# Visualizations (EDA & Reports)
 matplotlib>=3.7.0
 seaborn>=0.12.0
-joblib>=1.3.0
 streamlit>=1.30.0
-jupyter>=1.0.0
-ipykernel>=6.20.0
