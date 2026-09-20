@@ -1,4 +1,4 @@
-﻿# Python
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -23,3 +23,12 @@ Thumbs.db
 # IDEs
 .vscode/
 .idea/
+
+# Environment secrets — NEVER commit these
+.env
+
+# API log files
+logs/
+
+# Ruff cache
+.ruff_cache/

@@ -1,7 +1,9 @@
-﻿"""
-Production-grade Training Pipeline for Customer Churn Prediction.
-Encapsulates data loading, cleaning, stratified splitting, preprocessing,
-model fitting, and artifact serialization with strict type hints and logging.
+"""
+ChurnGuard AI — Production Training & Multi-Model Benchmarking Pipeline.
+Implements domain feature engineering, leak-proof ColumnTransformer,
+5-fold stratified cross-validation across 5 algorithms (Logistic Regression,
+Random Forest, LightGBM, HistGradientBoosting, GradientBoosting), PR-AUC
+evaluation, and single-artifact pipeline serialization.
 """
 
 import logging
@@ -12,35 +14,21 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
-from sklearn.model_selection import StratifiedKFold, cross_validate, train_test_split
+from sklearn.ensemble import GradientBoostingClassifier, HistGradientBoostingClassifier, RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score, average_precision_score
+from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-# Graceful import of XGBClassifier with fallback to HistGradientBoostingClassifier
+# Try importing LightGBM, fallback to GradientBoosting if needed
 try:
-    from xgboost import XGBClassifier
-    DEFAULT_CLASSIFIER = XGBClassifier(
-        n_estimators=150,
-        max_depth=5,
-        learning_rate=0.08,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        eval_metric="logloss",
-        random_state=42,
-    )
-    CLASSIFIER_NAME = "XGBClassifier"
+    from lightgbm import LGBMClassifier
+    HAS_LIGHTGBM = True
 except ImportError:
-    from sklearn.ensemble import HistGradientBoostingClassifier
-    DEFAULT_CLASSIFIER = HistGradientBoostingClassifier(
-        max_iter=150,
-        max_depth=6,
-        learning_rate=0.08,
-        random_state=42,
-    )
-    CLASSIFIER_NAME = "HistGradientBoostingClassifier"
+    HAS_LIGHTGBM = False
 
-
-# Configure structured logging
+# Structured logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -48,8 +36,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger("churn.train")
 
-# Feature declarations
-NUMERICAL_FEATURES: List[str] = ["tenure", "MonthlyCharges", "TotalCharges"]
+# Base feature groups
+RAW_NUMERICAL: List[str] = ["tenure", "MonthlyCharges", "TotalCharges"]
+ENGINEERED_NUMERICAL: List[str] = [
+    "tenure_monthly_ratio",
+    "avg_monthly_spend",
+    "support_protection_index",
+]
+ALL_NUMERICAL: List[str] = RAW_NUMERICAL + ENGINEERED_NUMERICAL
 
 CATEGORICAL_FEATURES: List[str] = [
     "gender",
@@ -68,62 +62,84 @@ CATEGORICAL_FEATURES: List[str] = [
     "Contract",
     "PaperlessBilling",
     "PaymentMethod",
+    "high_risk_combo",
 ]
 
 TARGET_COLUMN: str = "Churn"
 DEFAULT_DATA_PATH: Path = Path("data/customer_churn.csv")
 DEFAULT_MODEL_DIR: Path = Path("models")
+REPORTS_DIR: Path = Path("reports")
+
+
+def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply domain-driven feature engineering to uncover non-linear churn drivers:
+    - tenure_monthly_ratio: interaction between tenure and monthly billing
+    - avg_monthly_spend: TotalCharges normalized by tenure
+    - support_protection_index: count of protective add-on services
+    - high_risk_combo: indicator for Month-to-month + Fiber Optic + Electronic check
+    """
+    df = df.copy()
+
+    # Tenure x Monthly Charges interaction
+    df["tenure_monthly_ratio"] = df["tenure"] * df["MonthlyCharges"]
+
+    # Average monthly spend across historical tenure
+    df["avg_monthly_spend"] = df["TotalCharges"] / (df["tenure"] + 1.0)
+
+    # Support & Security Protection Index (0 to 4)
+    security_services = ["OnlineSecurity", "OnlineBackup", "DeviceProtection", "TechSupport"]
+    df["support_protection_index"] = 0
+    for col in security_services:
+        if col in df.columns:
+            df["support_protection_index"] += (df[col] == "Yes").astype(int)
+
+    # High-Risk Vulnerability Flag: Month-to-month contract with Electronic Check
+    is_m2m = df["Contract"] == "Month-to-month"
+    is_echeck = df["PaymentMethod"] == "Electronic check"
+    is_fiber = df["InternetService"] == "Fiber optic"
+    df["high_risk_combo"] = np.where(is_m2m & (is_echeck | is_fiber), "HighRiskCombo", "Standard")
+
+    return df
 
 
 def load_and_preprocess_raw_data(data_path: Path) -> Tuple[pd.DataFrame, pd.Series]:
     """
-    Load dataset from CSV, clean TotalCharges anomalies, drop arbitrary identifiers,
-    and separate features from the binary target.
-
-    Args:
-        data_path: Path to raw customer churn CSV.
-
-    Returns:
-        Tuple of (X: feature matrix DataFrame, y: binary target Series).
+    Load raw CSV, clean anomalies, engineer domain features, and separate target.
     """
     logger.info("Loading raw dataset from %s", data_path)
     if not data_path.exists():
-        raise FileNotFoundError(f"Dataset file not found at {data_path.resolve()}")
+        raise FileNotFoundError(f"Dataset not found at {data_path.resolve()}")
 
     df: pd.DataFrame = pd.read_csv(data_path)
-    logger.info("Raw dataset loaded: %d rows, %d columns", len(df), len(df.columns))
 
-    # TotalCharges contains whitespace strings for tenure=0 records
+    # Clean whitespace strings in TotalCharges (tenure == 0)
     df["TotalCharges"] = pd.to_numeric(
         df["TotalCharges"].astype(str).str.strip(), errors="coerce"
     ).fillna(0.0)
 
-    # Drop non-predictive identifier
+    # Drop non-predictive customerID
     if "customerID" in df.columns:
         df = df.drop(columns=["customerID"])
 
-    # Cast SeniorCitizen to string category
+    # Cast SeniorCitizen to string
     df["SeniorCitizen"] = df["SeniorCitizen"].astype(str)
+
+    # Apply Feature Engineering
+    df = engineer_features(df)
 
     y: pd.Series = (df[TARGET_COLUMN] == "Yes").astype(int)
     X: pd.DataFrame = df.drop(columns=[TARGET_COLUMN])
 
-    churn_rate: float = float(y.mean() * 100)
-    logger.info("Features extracted: %d columns | Churn prevalence: %.2f%%", X.shape[1], churn_rate)
+    logger.info("Dataset prepared: %d rows, %d features | Churn rate: %.2f%%", X.shape[0], X.shape[1], y.mean() * 100)
     return X, y
 
 
-def build_pipeline() -> Pipeline:
-    """
-    Build leak-proof Scikit-Learn Pipeline combining ColumnTransformer
-    (StandardScaler + OneHotEncoder) with the gradient boosted classifier.
-
-    Returns:
-        Assembled Pipeline ready for fitting.
-    """
-    preprocessor: ColumnTransformer = ColumnTransformer(
+def build_preprocessor() -> ColumnTransformer:
+    """Build leak-proof ColumnTransformer for numeric scaling and one-hot encoding."""
+    return ColumnTransformer(
         transformers=[
-            ("num", StandardScaler(), NUMERICAL_FEATURES),
+            ("num", StandardScaler(), ALL_NUMERICAL),
             (
                 "cat",
                 OneHotEncoder(drop="first", handle_unknown="ignore", sparse_output=False),
@@ -134,95 +150,187 @@ def build_pipeline() -> Pipeline:
         verbose_feature_names_out=False,
     )
 
-    pipeline: Pipeline = Pipeline(
-        steps=[
+
+def build_pipeline(classifier: object = None) -> Pipeline:
+    """Build a complete ML pipeline containing ColumnTransformer preprocessor and classifier."""
+    if classifier is None:
+        classifier = RandomForestClassifier(
+            n_estimators=200,
+            max_depth=8,
+            min_samples_split=10,
+            class_weight="balanced",
+            random_state=42,
+        )
+    return Pipeline([
+        ("preprocessor", build_preprocessor()),
+        ("classifier", classifier),
+    ])
+
+
+def get_candidate_models() -> Dict[str, object]:
+    """Instantiate the 5 candidate classification algorithms."""
+    models: Dict[str, object] = {
+        "Logistic Regression": LogisticRegression(
+            max_iter=1000,
+            class_weight="balanced",
+            C=0.1,
+            random_state=42,
+        ),
+        "Random Forest": RandomForestClassifier(
+            n_estimators=200,
+            max_depth=8,
+            min_samples_split=10,
+            class_weight="balanced",
+            random_state=42,
+            n_jobs=-1,
+        ),
+        "HistGradientBoosting": HistGradientBoostingClassifier(
+            max_iter=150,
+            max_depth=6,
+            learning_rate=0.08,
+            class_weight="balanced",
+            random_state=42,
+        ),
+        "Gradient Boosting": GradientBoostingClassifier(
+            n_estimators=150,
+            max_depth=4,
+            learning_rate=0.08,
+            subsample=0.85,
+            random_state=42,
+        ),
+    }
+
+    if HAS_LIGHTGBM:
+        models["LightGBM"] = LGBMClassifier(
+            n_estimators=150,
+            max_depth=6,
+            learning_rate=0.08,
+            class_weight="balanced",
+            random_state=42,
+            verbose=-1,
+        )
+
+    return models
+
+
+def evaluate_candidate_models(
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    preprocessor: ColumnTransformer,
+    random_state: int = 42,
+) -> Tuple[pd.DataFrame, str]:
+    """
+    Perform 5-Fold Stratified Cross-Validation across all candidate models,
+    computing Accuracy, Precision, Recall, F1, ROC-AUC, and PR-AUC.
+    """
+    logger.info("Executing 5-Fold Stratified CV across candidate models...")
+    models = get_candidate_models()
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=random_state)
+
+    results_list: List[Dict[str, object]] = []
+    best_score: float = -1.0
+    best_model_name: str = ""
+
+    for name, model in models.items():
+        pipeline = Pipeline([
             ("preprocessor", preprocessor),
-            ("classifier", DEFAULT_CLASSIFIER),
-        ]
-    )
-    logger.info("Assembled Pipeline with ColumnTransformer and %s", CLASSIFIER_NAME)
-    return pipeline
+            ("classifier", model),
+        ])
+
+        accs, precs, recs, f1s, aucs, praucs = [], [], [], [], [], []
+
+        for fold, (train_idx, val_idx) in enumerate(cv.split(X_train, y_train), 1):
+            X_tr, X_val = X_train.iloc[train_idx], X_train.iloc[val_idx]
+            y_tr, y_val = y_train.iloc[train_idx], y_train.iloc[val_idx]
+
+            pipeline.fit(X_tr, y_tr)
+            y_pred = pipeline.predict(X_val)
+            y_prob = pipeline.predict_proba(X_val)[:, 1]
+
+            accs.append(accuracy_score(y_val, y_pred))
+            precs.append(precision_score(y_val, y_pred, zero_division=0))
+            recs.append(recall_score(y_val, y_pred))
+            f1s.append(f1_score(y_val, y_pred))
+            aucs.append(roc_auc_score(y_val, y_prob))
+            praucs.append(average_precision_score(y_val, y_prob))
+
+        mean_auc = float(np.mean(aucs))
+        mean_recall = float(np.mean(recs))
+        mean_f1 = float(np.mean(f1s))
+
+        # Balanced ranking criterion: 0.5 * ROC-AUC + 0.3 * F1 + 0.2 * PR-AUC
+        composite_score = 0.5 * mean_auc + 0.3 * mean_f1 + 0.2 * float(np.mean(praucs))
+
+        if composite_score > best_score:
+            best_score = composite_score
+            best_model_name = name
+
+        results_list.append({
+            "Model": name,
+            "Accuracy": round(float(np.mean(accs)), 4),
+            "Precision": round(float(np.mean(precs)), 4),
+            "Recall": round(mean_recall, 4),
+            "F1-Score": round(mean_f1, 4),
+            "ROC-AUC": round(mean_auc, 4),
+            "PR-AUC": round(float(np.mean(praucs)), 4),
+            "ROC-AUC Std": round(float(np.std(aucs)), 4),
+        })
+
+        logger.info(
+            "[%s] ROC-AUC: %.4f | Recall: %.4f | F1: %.4f | PR-AUC: %.4f",
+            name, mean_auc, mean_recall, mean_f1, float(np.mean(praucs))
+        )
+
+    df_results = pd.DataFrame(results_list).sort_values(by="ROC-AUC", ascending=False)
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    df_results.to_csv(REPORTS_DIR / "model_benchmark_comparison.csv", index=False)
+    logger.info("Saved model benchmark scorecard to %s", REPORTS_DIR / "model_benchmark_comparison.csv")
+    logger.info("Selected Top Model: %s (Composite Score: %.4f)", best_model_name, best_score)
+    return df_results, best_model_name
 
 
 def run_training_pipeline(
     data_path: Path = DEFAULT_DATA_PATH,
     model_dir: Path = DEFAULT_MODEL_DIR,
-    test_size: float = 0.20,
-    random_state: int = 42,
-) -> Tuple[Pipeline, Dict[str, float]]:
-    """
-    Execute full training workflow: load, split, 5-fold CV, fit, and serialize.
-
-    Args:
-        data_path: Path to customer CSV.
-        model_dir: Target directory to save serialized pipeline.
-        test_size: Ratio for train-test split (default 0.20).
-        random_state: Random seed for reproducibility.
-
-    Returns:
-        Tuple of (fitted Pipeline, cross-validation metrics dict).
-    """
+) -> Tuple[Pipeline, pd.DataFrame]:
+    """Execute end-to-end training and serialization workflow."""
     X, y = load_and_preprocess_raw_data(data_path)
 
-    # Stratified split to preserve class distribution
+    # 80/20 Stratified Split
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, stratify=y, random_state=random_state
+        X, y, test_size=0.20, stratify=y, random_state=42
     )
-    logger.info("Split completed: %d train samples, %d test samples", len(X_train), len(X_test))
 
-    # Cache split partitions for evaluate.py
+    # Cache split data
     processed_dir = Path("data/processed")
     processed_dir.mkdir(parents=True, exist_ok=True)
     X_test.to_parquet(processed_dir / "X_test.parquet", index=False)
     y_test.to_frame("Churn").to_parquet(processed_dir / "y_test.parquet", index=False)
+    X_train.to_parquet(processed_dir / "X_train.parquet", index=False)
+    y_train.to_frame("Churn").to_parquet(processed_dir / "y_train.parquet", index=False)
 
-    pipeline: Pipeline = build_pipeline()
+    preprocessor = build_preprocessor()
+    benchmark_df, best_name = evaluate_candidate_models(X_train, y_train, preprocessor)
 
-    # 5-Fold Stratified Cross-Validation
-    logger.info("Running 5-Fold Stratified Cross-Validation...")
-    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=random_state)
-    scoring: Dict[str, str] = {
-        "accuracy": "accuracy",
-        "precision": "precision",
-        "recall": "recall",
-        "f1": "f1",
-        "roc_auc": "roc_auc",
-    }
-    cv_scores = cross_validate(pipeline, X_train, y_train, cv=cv, scoring=scoring, n_jobs=-1)
+    # Instantiate best model
+    candidate_models = get_candidate_models()
+    best_classifier = candidate_models[best_name]
 
-    metrics: Dict[str, float] = {
-        "cv_accuracy_mean": float(np.mean(cv_scores["test_accuracy"])),
-        "cv_accuracy_std": float(np.std(cv_scores["test_accuracy"])),
-        "cv_recall_mean": float(np.mean(cv_scores["test_recall"])),
-        "cv_recall_std": float(np.std(cv_scores["test_recall"])),
-        "cv_precision_mean": float(np.mean(cv_scores["test_precision"])),
-        "cv_f1_mean": float(np.mean(cv_scores["test_f1"])),
-        "cv_roc_auc_mean": float(np.mean(cv_scores["test_roc_auc"])),
-        "cv_roc_auc_std": float(np.std(cv_scores["test_roc_auc"])),
-    }
+    final_pipeline = Pipeline([
+        ("preprocessor", preprocessor),
+        ("classifier", best_classifier),
+    ])
 
-    logger.info(
-        "CV Results: ROC-AUC: %.4f (+/- %.4f) | Recall: %.4f (+/- %.4f) | F1: %.4f",
-        metrics["cv_roc_auc_mean"],
-        metrics["cv_roc_auc_std"],
-        metrics["cv_recall_mean"],
-        metrics["cv_recall_std"],
-        metrics["cv_f1_mean"],
-    )
+    logger.info("Fitting final production pipeline (%s) on complete training set (%d rows)...", best_name, len(X_train))
+    final_pipeline.fit(X_train, y_train)
 
-    # Fit final pipeline on complete training set
-    logger.info("Fitting final pipeline on all %d training samples...", len(X_train))
-    pipeline.fit(X_train, y_train)
-
-    # Serialize single pipeline artifact
+    # Serialize artifacts
     model_dir.mkdir(parents=True, exist_ok=True)
-    pipeline_path: Path = model_dir / "pipeline.joblib"
-    joblib.dump(pipeline, pipeline_path)
-    # Also save as best_model.pkl for compatibility
-    joblib.dump(pipeline, model_dir / "best_model.pkl")
+    joblib.dump(final_pipeline, model_dir / "pipeline.joblib")
+    joblib.dump(final_pipeline, model_dir / "best_model.pkl")
+    logger.info("Pipeline serialized to %s and %s", model_dir / "pipeline.joblib", model_dir / "best_model.pkl")
 
-    logger.info("Model pipeline successfully serialized to %s", pipeline_path.resolve())
-    return pipeline, metrics
+    return final_pipeline, benchmark_df
 
 
 if __name__ == "__main__":

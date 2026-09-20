@@ -1,4 +1,4 @@
-﻿name: CI Quality & Test Pipeline
+name: CI — Lint, Test, Docker Build
 
 on:
   push:
@@ -7,8 +7,11 @@ on:
     branches: [ main ]
 
 jobs:
-  validate:
-    name: Lint & Test
+  # ──────────────────────────────────────────────
+  # Job 1: Lint + Test
+  # ──────────────────────────────────────────────
+  test:
+    name: Lint & Pytest
     runs-on: ubuntu-latest
 
     steps:
@@ -26,10 +29,52 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run Ruff Linting
-        run: |
-          ruff check .
+      - name: Run Ruff linting
+        run: ruff check .
 
-      - name: Run Pytest Suite
+      - name: Run Pytest suite
+        run: pytest -v --tb=short
+
+  # ──────────────────────────────────────────────
+  # Job 2: Docker Build + Smoke Test
+  # ──────────────────────────────────────────────
+  docker:
+    name: Docker Build & Health Smoke Test
+    runs-on: ubuntu-latest
+    needs: test          # only run if lint+tests pass
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t churn-api:ci .
+
+      - name: Start container
         run: |
-          pytest -v
+          docker run -d --name churn-ci-container -p 8000:8000 churn-api:ci
+          # Wait for the service to be ready (up to 30s)
+          for i in $(seq 1 15); do
+            if curl -sf http://localhost:8000/health; then
+              echo "API is up"
+              break
+            fi
+            echo "Waiting... ($i/15)"
+            sleep 2
+          done
+
+      - name: Smoke test /health
+        run: |
+          STATUS=$(curl -sf http://localhost:8000/health | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
+          echo "API status: $STATUS"
+          [ "$STATUS" = "healthy" ] || [ "$STATUS" = "degraded" ]
+
+      - name: Smoke test /model-info
+        run: curl -sf http://localhost:8000/model-info | python3 -c "import sys,json; d=json.load(sys.stdin); assert 'version' in d"
+
+      - name: Smoke test /metrics
+        run: curl -sf http://localhost:8000/metrics | python3 -c "import sys,json; d=json.load(sys.stdin); assert 'models' in d"
+
+      - name: Stop container
+        if: always()
+        run: docker stop churn-ci-container && docker rm churn-ci-container

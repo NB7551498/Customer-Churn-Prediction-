@@ -1,0 +1,16 @@
+{
+  "model_name": "Customer Churn Classifier",
+  "version": "1.0.0",
+  "algorithm": "XGBClassifier",
+  "fallback_algorithm": "HistGradientBoostingClassifier",
+  "training_date": "2026-09-18",
+  "features": 19,
+  "target": "Churn",
+  "dataset": "Telco Customer Churn (Kaggle)",
+  "dataset_size": 7043,
+  "train_test_split": "80/20 stratified",
+  "cv_strategy": "5-Fold Stratified Cross-Validation",
+  "threshold_strategy": "Financially optimized (business cost-benefit)",
+  "preprocessing": "StandardScaler (numeric) + OneHotEncoder drop=first (categorical)",
+  "description": "Binary classifier predicting customer churn probability for a telecom subscriber base. Trained on 19 customer attributes covering demographics, services, contract type, and billing."
+}

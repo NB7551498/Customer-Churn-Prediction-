@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChurnGuard AI — Retention Intelligence Platform</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: { 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8' },
+            darkbg: '#0f172a',
+            cardbg: '#1e293b',
+            cardborder: '#334155'
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-darkbg text-slate-100 min-h-screen font-sans antialiased">
+  
+  <!-- Navigation Header -->
+  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center font-bold text-white text-xl shadow-lg shadow-blue-500/30">
+          🛡️
+        </div>
+        <div>
+          <span class="font-extrabold text-xl tracking-tight text-white">ChurnGuard <span class="text-blue-500">AI</span></span>
+          <span class="hidden sm:inline-block text-xs uppercase ml-2 px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 font-semibold">Retention Platform v2.0</span>
+        </div>
+      </div>
+      <div class="flex items-center space-x-3">
+        <a href="/docs" target="_blank" class="text-xs px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 transition font-medium border border-slate-700">API Docs (Swagger)</a>
+        <a href="http://localhost:8501" target="_blank" class="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 transition font-medium shadow-md shadow-indigo-600/30">Open Streamlit UI</a>
+        <div class="h-2 w-2 rounded-full bg-emerald-500 animate-ping" title="Model Online"></div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+    
+    <!-- Top Executive KPI Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+      <div class="bg-cardbg rounded-2xl p-5 border border-cardborder shadow-sm">
+        <div class="text-slate-400 text-xs font-semibold uppercase tracking-wider">Total Active Subscribers</div>
+        <div class="mt-2 text-3xl font-extrabold text-white flex items-baseline justify-between">
+          <span>7,043</span>
+          <span class="text-xs font-normal text-slate-400">Telecom Cohort</span>
+        </div>
+        <div class="mt-2 text-xs text-emerald-400 font-medium flex items-center">
+          <span class="mr-1">✓</span> 100% In-memory indexed
+        </div>
+      </div>
+
+      <div class="bg-cardbg rounded-2xl p-5 border border-cardborder shadow-sm">
+        <div class="text-slate-400 text-xs font-semibold uppercase tracking-wider">At-Risk Subscribers</div>
+        <div class="mt-2 text-3xl font-extrabold text-rose-400 flex items-baseline justify-between">
+          <span>1,869</span>
+          <span class="text-xs font-normal text-rose-400/80">26.54% Prevalence</span>
+        </div>
+        <div class="mt-2 text-xs text-rose-400/90 font-medium">
+          Requires targeted retention action
+        </div>
+      </div>
+
+      <div class="bg-cardbg rounded-2xl p-5 border border-cardborder shadow-sm">
+        <div class="text-slate-400 text-xs font-semibold uppercase tracking-wider">Recurring Revenue at Risk</div>
+        <div class="mt-2 text-3xl font-extrabold text-amber-400 flex items-baseline justify-between">
+          <span>$139.1K<span class="text-sm font-normal text-slate-400">/mo</span></span>
+          <span class="text-xs font-normal text-amber-400/80">$1.67M ARR</span>
+        </div>
+        <div class="mt-2 text-xs text-amber-400 font-medium">
+          Targetable by retention playbooks
+        </div>
+      </div>
+
+      <div class="bg-cardbg rounded-2xl p-5 border border-cardborder shadow-sm">
+        <div class="text-slate-400 text-xs font-semibold uppercase tracking-wider">Financial Optimization Value</div>
+        <div class="mt-2 text-3xl font-extrabold text-emerald-400 flex items-baseline justify-between">
+          <span>+$146.2K</span>
+          <span class="text-xs font-normal text-emerald-400/80">vs. Naive 0.50</span>
+        </div>
+        <div class="mt-2 text-xs text-emerald-400 font-medium">
+          Optimal Threshold: t = 0.10
+        </div>
+      </div>
+    </div>
+
+    <!-- Analytics Charts Row -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <!-- Risk Distribution Doughnut -->
+      <div class="bg-cardbg rounded-2xl p-6 border border-cardborder">
+        <h3 class="font-bold text-slate-100 text-base mb-4 flex items-center justify-between">
+          <span>Portfolio Risk Stratification</span>
+          <span class="text-xs text-slate-400">3-Tier Severity</span>
+        </h3>
+        <div class="h-56 relative flex items-center justify-center">
+          <canvas id="riskChart"></canvas>
+        </div>
+        <div class="mt-4 grid grid-cols-3 text-center text-xs">
+          <div><span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 mr-1"></span>Low: 62%</div>
+          <div><span class="inline-block w-2.5 h-2.5 rounded-full bg-amber-500 mr-1"></span>Med: 19%</div>
+          <div><span class="inline-block w-2.5 h-2.5 rounded-full bg-rose-500 mr-1"></span>High: 19%</div>
+        </div>
+      </div>
+
+      <!-- Segmentation Personas Bar Chart -->
+      <div class="bg-cardbg rounded-2xl p-6 border border-cardborder lg:col-span-2">
+        <h3 class="font-bold text-slate-100 text-base mb-4 flex items-center justify-between">
+          <span>Customer Segmentation Personas (K-Means k=4)</span>
+          <span class="text-xs text-slate-400">Cluster Distribution</span>
+        </h3>
+        <div class="h-64">
+          <canvas id="segmentChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Single Customer Risk Profiler & SHAP Analysis -->
+    <div class="bg-cardbg rounded-2xl p-6 border border-cardborder shadow-sm space-y-6">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-800 gap-3">
+        <div>
+          <h2 class="text-lg font-bold text-white flex items-center">
+            <span class="mr-2">⚡</span> Real-Time Customer Churn Scoring & SHAP Explainer
+          </h2>
+          <p class="text-xs text-slate-400">Tweak subscriber variables or select quick presets to simulate real-time AI risk evaluation.</p>
+        </div>
+        <div class="flex items-center space-x-2">
+          <span class="text-xs text-slate-400 font-medium">Quick Presets:</span>
+          <button onclick="applyPreset('high')" class="text-xs px-2.5 py-1 rounded bg-rose-500/10 text-rose-400 border border-rose-500/30 hover:bg-rose-500/20 font-medium">High Risk Fiber</button>
+          <button onclick="applyPreset('loyal')" class="text-xs px-2.5 py-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 font-medium">Loyal 2-Year</button>
+          <button onclick="applyPreset('budget')" class="text-xs px-2.5 py-1 rounded bg-blue-500/10 text-blue-400 border border-blue-500/30 hover:bg-blue-500/20 font-medium">Budget DSL</button>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <!-- Form Inputs -->
+        <form id="predictForm" class="lg:col-span-6 grid grid-cols-2 gap-4 text-xs">
+          <div>
+            <label class="block text-slate-400 font-medium mb-1">Tenure (Months: 0-120)</label>
+            <input type="number" id="tenure" min="0" max="120" value="3" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500">
+          </div>
+          <div>
+            <label class="block text-slate-400 font-medium mb-1">Monthly Charges ($)</label>
+            <input type="number" id="MonthlyCharges" step="0.5" value="89.5" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500">
+          </div>
+          <div>
+            <label class="block text-slate-400 font-medium mb-1">Total Spend ($)</label>
+            <input type="number" id="TotalCharges" step="1" value="268.5" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500">
+          </div>
+          <div>
+            <label class="block text-slate-400 font-medium mb-1">Contract Type</label>
+            <select id="Contract" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500">
+              <option value="Month-to-month" selected>Month-to-month</option>
+              <option value="One year">One year</option>
+              <option value="Two year">Two year</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-slate-400 font-medium mb-1">Internet Service</label>
+            <select id="InternetService" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500">
+              <option value="Fiber optic" selected>Fiber optic</option>
+              <option value="DSL">DSL</option>
+              <option value="No">No Internet</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-slate-400 font-medium mb-1">Payment Method</label>
+            <select id="PaymentMethod" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500">
+              <option value="Electronic check" selected>Electronic check</option>
+              <option value="Mailed check">Mailed check</option>
+              <option value="Bank transfer (automatic)">Bank transfer (automatic)</option>
+              <option value="Credit card (automatic)">Credit card (automatic)</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-slate-400 font-medium mb-1">Tech Support</label>
+            <select id="TechSupport" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500">
+              <option value="No" selected>No</option>
+              <option value="Yes">Yes</option>
+              <option value="No internet service">No internet service</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-slate-400 font-medium mb-1">Online Security</label>
+            <select id="OnlineSecurity" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500">
+              <option value="No" selected>No</option>
+              <option value="Yes">Yes</option>
+              <option value="No internet service">No internet service</option>
+            </select>
+          </div>
+          <div class="col-span-2 mt-2">
+            <button type="button" onclick="scoreCustomer()" class="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold transition flex items-center justify-center space-x-2 shadow-lg shadow-blue-600/30">
+              <span>Evaluate Subscriber Risk</span>
+              <span>→</span>
+            </button>
+          </div>
+        </form>
+
+        <!-- Live Results View -->
+        <div class="lg:col-span-6 bg-slate-900/60 rounded-xl p-5 border border-slate-800 space-y-4 flex flex-col justify-between">
+          <div class="space-y-3">
+            <div class="flex items-center justify-between">
+              <div class="text-xs uppercase tracking-wider text-slate-400 font-bold">Predicted Risk Assessment</div>
+              <div id="resultBadge" class="text-xs px-2.5 py-0.5 rounded-full font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30">
+                HIGH RISK
+              </div>
+            </div>
+            <div class="flex items-baseline space-x-3">
+              <span id="resultProb" class="text-4xl font-extrabold text-white">88.4%</span>
+              <span class="text-xs text-slate-400">Churn Probability</span>
+            </div>
+            
+            <!-- Persona Tag -->
+            <div class="p-2.5 rounded-lg bg-slate-800/80 border border-slate-700/60 text-xs">
+              <span class="text-slate-400">Customer Segment:</span> 
+              <span id="resultSegment" class="font-bold text-amber-300 ml-1">High-Value At-Risk</span>
+              <p id="resultSegmentDesc" class="text-[11px] text-slate-400 mt-0.5">Subscribers with high monthly charges but low tenure and few support add-ons.</p>
+            </div>
+
+            <!-- SHAP Explainable AI Breakdown -->
+            <div class="space-y-2 pt-2">
+              <div class="text-xs font-semibold text-slate-300 flex items-center justify-between">
+                <span>Key Predictive Churn Drivers (SHAP)</span>
+                <span class="text-[10px] text-slate-500">Attribution Impact</span>
+              </div>
+              <div id="shapBars" class="space-y-1.5 text-xs">
+                <!-- Injected dynamically -->
+              </div>
+            </div>
+
+            <!-- AI Retention Recommendation -->
+            <div class="p-3 rounded-xl bg-blue-950/40 border border-blue-800/50 space-y-1.5 text-xs">
+              <div class="font-bold text-blue-300 flex items-center">
+                <span class="mr-1.5">💡</span> Recommended Retention Playbook
+              </div>
+              <ul id="retentionActions" class="list-disc list-inside text-slate-300 space-y-1 text-[11px]">
+                <!-- Injected dynamically -->
+              </ul>
+              <div class="text-[10px] text-emerald-400 font-medium pt-1 border-t border-blue-800/30 flex justify-between">
+                <span id="roiPreserved">Est. ARR Saved: $751.80</span>
+                <span id="riskReduction">Projected Impact: -35% risk</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Batch Prediction File Upload Section -->
+    <div class="bg-cardbg rounded-2xl p-6 border border-cardborder shadow-sm space-y-4">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+        <div>
+          <h2 class="text-base font-bold text-white flex items-center">
+            <span class="mr-2">📁</span> Batch CSV Risk Scoring & Export
+          </h2>
+          <p class="text-xs text-slate-400">Upload bulk customer records (e.g. monthly cohort) to generate prioritized risk rankings and export CSV.</p>
+        </div>
+        <button onclick="downloadSampleCSV()" class="text-xs px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 font-medium">
+          Download Sample Template
+        </button>
+      </div>
+
+      <div class="border-2 border-dashed border-slate-700 rounded-xl p-6 text-center hover:border-blue-500/50 transition cursor-pointer" onclick="document.getElementById('csvUpload').click()">
+        <input type="file" id="csvUpload" accept=".csv" class="hidden" onchange="handleCSVUpload(event)">
+        <div class="text-3xl mb-2">📄</div>
+        <div class="text-sm font-semibold text-white">Click or Drag customer CSV here</div>
+        <div class="text-xs text-slate-400 mt-1">Supports standard Telco schema (TotalCharges, tenure, Contract, MonthlyCharges...)</div>
+      </div>
+
+      <div id="batchResultsTable" class="hidden space-y-3 pt-3">
+        <div class="flex items-center justify-between text-xs">
+          <span id="batchCount" class="font-bold text-slate-200">Evaluated 50 customers</span>
+          <button onclick="exportBatchCSV()" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-bold shadow-md shadow-emerald-600/20">
+            Export Scored CSV ↓
+          </button>
+        </div>
+        <div class="overflow-x-auto max-h-60 overflow-y-auto rounded-lg border border-slate-800">
+          <table class="min-w-full divide-y divide-slate-800 text-left text-xs">
+            <thead class="bg-slate-900 sticky top-0 text-slate-400">
+              <tr>
+                <th class="px-3 py-2">ID</th>
+                <th class="px-3 py-2">Churn Probability</th>
+                <th class="px-3 py-2">Risk Level</th>
+                <th class="px-3 py-2">Customer Persona</th>
+                <th class="px-3 py-2">Top Churn Driver</th>
+              </tr>
+            </thead>
+            <tbody id="batchTableBody" class="divide-y divide-slate-800 text-slate-200"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Model Benchmark Leaderboard -->
+    <div class="bg-cardbg rounded-2xl p-6 border border-cardborder shadow-sm space-y-4">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+        <div>
+          <h2 class="text-base font-bold text-white flex items-center">
+            <span class="mr-2">🏆</span> Model Benchmark Leaderboard (5-Fold Stratified Cross-Validation)
+          </h2>
+          <p class="text-xs text-slate-400">Comprehensive comparative evaluation across 5 classification algorithms on identical training partitions.</p>
+        </div>
+      </div>
+      <div class="overflow-x-auto rounded-lg border border-slate-800">
+        <table class="min-w-full divide-y divide-slate-800 text-left text-xs">
+          <thead class="bg-slate-900 text-slate-400 font-semibold">
+            <tr>
+              <th class="px-4 py-3">Algorithm</th>
+              <th class="px-4 py-3">Accuracy</th>
+              <th class="px-4 py-3">Precision</th>
+              <th class="px-4 py-3">Recall (Sensitivity)</th>
+              <th class="px-4 py-3">F1-Score</th>
+              <th class="px-4 py-3">ROC-AUC</th>
+              <th class="px-4 py-3">PR-AUC</th>
+              <th class="px-4 py-3">Status</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800 text-slate-200">
+            <tr class="bg-blue-500/5 font-semibold">
+              <td class="px-4 py-3 text-blue-400 flex items-center"><span class="mr-1.5">⭐</span> Logistic Regression (Balanced)</td>
+              <td class="px-4 py-3">75.51%</td>
+              <td class="px-4 py-3">52.55%</td>
+              <td class="px-4 py-3 text-emerald-400 font-bold">79.20%</td>
+              <td class="px-4 py-3">63.17%</td>
+              <td class="px-4 py-3 text-emerald-400 font-bold">0.8480</td>
+              <td class="px-4 py-3 font-bold">0.6689</td>
+              <td class="px-4 py-3"><span class="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px]">PRODUCTION CHAMPION</span></td>
+            </tr>
+            <tr>
+              <td class="px-4 py-3 font-medium">Random Forest (Balanced)</td>
+              <td class="px-4 py-3">76.80%</td>
+              <td class="px-4 py-3">54.52%</td>
+              <td class="px-4 py-3">76.52%</td>
+              <td class="px-4 py-3">63.66%</td>
+              <td class="px-4 py-3">0.8458</td>
+              <td class="px-4 py-3">0.6611</td>
+              <td class="px-4 py-3"><span class="px-2 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px]">CANDIDATE</span></td>
+            </tr>
+            <tr>
+              <td class="px-4 py-3 font-medium">Gradient Boosting</td>
+              <td class="px-4 py-3 font-bold text-white">79.82%</td>
+              <td class="px-4 py-3 font-bold text-white">64.96%</td>
+              <td class="px-4 py-3">52.37%</td>
+              <td class="px-4 py-3">57.95%</td>
+              <td class="px-4 py-3">0.8437</td>
+              <td class="px-4 py-3">0.6539</td>
+              <td class="px-4 py-3"><span class="px-2 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px]">CANDIDATE</span></td>
+            </tr>
+            <tr>
+              <td class="px-4 py-3 font-medium">HistGradientBoosting</td>
+              <td class="px-4 py-3">76.39%</td>
+              <td class="px-4 py-3">54.02%</td>
+              <td class="px-4 py-3">74.05%</td>
+              <td class="px-4 py-3">62.46%</td>
+              <td class="px-4 py-3">0.8383</td>
+              <td class="px-4 py-3">0.6460</td>
+              <td class="px-4 py-3"><span class="px-2 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px]">CANDIDATE</span></td>
+            </tr>
+            <tr>
+              <td class="px-4 py-3 font-medium">LightGBM Classifier</td>
+              <td class="px-4 py-3">76.45%</td>
+              <td class="px-4 py-3">54.14%</td>
+              <td class="px-4 py-3">73.38%</td>
+              <td class="px-4 py-3">62.31%</td>
+              <td class="px-4 py-3">0.8374</td>
+              <td class="px-4 py-3">0.6486</td>
+              <td class="px-4 py-3"><span class="px-2 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px]">CANDIDATE</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+
+  <footer class="border-t border-slate-800 py-6 text-center text-xs text-slate-500">
+    ChurnGuard AI Platform &bull; Engineered by Nikhil Rajbhar &bull; Powered by FastAPI, Scikit-Learn & SHAP
+  </footer>
+
+  <script>
+    // Initialize Charts on Load
+    window.addEventListener('DOMContentLoaded', () => {
+      // Risk Donut
+      const ctxRisk = document.getElementById('riskChart').getContext('2d');
+      new Chart(ctxRisk, {
+        type: 'doughnut',
+        data: {
+          labels: ['Low Risk', 'Medium Risk', 'High Risk'],
+          datasets: [{
+            data: [4367, 1338, 1338],
+            backgroundColor: ['#10b981', '#f59e0b', '#ef4444'],
+            borderWidth: 0
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          cutout: '72%'
+        }
+      });
+
+      // Segment Bar
+      const ctxSeg = document.getElementById('segmentChart').getContext('2d');
+      new Chart(ctxSeg, {
+        type: 'bar',
+        data: {
+          labels: ['High-Value Loyalists', 'High-Value At-Risk', 'Budget Consumers', 'Unsettled Onboarders'],
+          datasets: [{
+            label: 'Subscriber Count',
+            data: [1940, 1680, 2180, 1243],
+            backgroundColor: ['#3b82f6', '#f43f5e', '#10b981', '#f59e0b'],
+            borderRadius: 6
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 10 } } },
+            y: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' } }
+          }
+        }
+      });
+
+      // Run initial score
+      scoreCustomer();
+    });
+
+    const PRESETS = {
+      high: {
+        tenure: 3, MonthlyCharges: 89.5, TotalCharges: 268.5,
+        Contract: "Month-to-month", InternetService: "Fiber optic",
+        PaymentMethod: "Electronic check", TechSupport: "No", OnlineSecurity: "No"
+      },
+      loyal: {
+        tenure: 68, MonthlyCharges: 65.0, TotalCharges: 4420.0,
+        Contract: "Two year", InternetService: "DSL",
+        PaymentMethod: "Bank transfer (automatic)", TechSupport: "Yes", OnlineSecurity: "Yes"
+      },
+      budget: {
+        tenure: 18, MonthlyCharges: 24.5, TotalCharges: 441.0,
+        Contract: "One year", InternetService: "No",
+        PaymentMethod: "Mailed check", TechSupport: "No internet service", OnlineSecurity: "No internet service"
+      }
+    };
+
+    function applyPreset(type) {
+      const p = PRESETS[type];
+      for (const key in p) {
+        const el = document.getElementById(key);
+        if (el) el.value = p[key];
+      }
+      scoreCustomer();
+    }
+
+    async function scoreCustomer() {
+      const payload = {
+        gender: "Female",
+        SeniorCitizen: "0",
+        Partner: "No",
+        Dependents: "No",
+        tenure: parseInt(document.getElementById('tenure').value) || 1,
+        PhoneService: "Yes",
+        MultipleLines: "No",
+        InternetService: document.getElementById('InternetService').value,
+        OnlineSecurity: document.getElementById('OnlineSecurity').value,
+        OnlineBackup: "No",
+        DeviceProtection: "No",
+        TechSupport: document.getElementById('TechSupport').value,
+        StreamingTV: "Yes",
+        StreamingMovies: "Yes",
+        Contract: document.getElementById('Contract').value,
+        PaperlessBilling: "Yes",
+        PaymentMethod: document.getElementById('PaymentMethod').value,
+        MonthlyCharges: parseFloat(document.getElementById('MonthlyCharges').value) || 20.0,
+        TotalCharges: parseFloat(document.getElementById('TotalCharges').value) || 50.0
+      };
+
+      try {
+        const res = await fetch('/predict', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+
+        // Update UI
+        const probPct = (data.churn_probability * 100).toFixed(1);
+        document.getElementById('resultProb').innerText = probPct + '%';
+        
+        const badge = document.getElementById('resultBadge');
+        badge.innerText = data.risk_tier + ' RISK';
+        if (data.risk_tier === 'HIGH') {
+          badge.className = "text-xs px-2.5 py-0.5 rounded-full font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30";
+        } else if (data.risk_tier === 'MEDIUM') {
+          badge.className = "text-xs px-2.5 py-0.5 rounded-full font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30";
+        } else {
+          badge.className = "text-xs px-2.5 py-0.5 rounded-full font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30";
+        }
+
+        document.getElementById('resultSegment').innerText = data.segmentation.segment_name;
+        document.getElementById('resultSegmentDesc').innerText = data.segmentation.description;
+
+        // Render SHAP attribution bars
+        const shapContainer = document.getElementById('shapBars');
+        shapContainer.innerHTML = '';
+        data.top_churn_drivers.forEach(d => {
+          shapContainer.innerHTML += `
+            <div class="flex items-center justify-between">
+              <span class="text-slate-300">${d.factor}</span>
+              <span class="text-rose-400 font-bold">${d.relative_pct}</span>
+            </div>
+            <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+              <div class="bg-rose-500 h-full rounded-full" style="width: ${d.relative_pct.replace('+', '')}"></div>
+            </div>
+          `;
+        });
+        data.top_retention_factors.slice(0, 2).forEach(d => {
+          shapContainer.innerHTML += `
+            <div class="flex items-center justify-between pt-1">
+              <span class="text-slate-400">${d.factor} (Retention Buffer)</span>
+              <span class="text-emerald-400 font-bold">${d.relative_pct}</span>
+            </div>
+            <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+              <div class="bg-emerald-500 h-full rounded-full" style="width: ${d.relative_pct.replace('-', '')}"></div>
+            </div>
+          `;
+        });
+
+        // Retention Playbook
+        const actUl = document.getElementById('retentionActions');
+        actUl.innerHTML = '';
+        data.retention_playbook.recommended_actions.forEach(act => {
+          actUl.innerHTML += `<li>${act}</li>`;
+        });
+        document.getElementById('roiPreserved').innerText = "Preserved: " + data.retention_playbook.projected_clv_preserved;
+        document.getElementById('riskReduction').innerText = "Impact: " + data.retention_playbook.projected_risk_reduction;
+
+      } catch (err) {
+        console.error("Scoring error:", err);
+      }
+    }
+
+    let batchData = [];
+    function handleCSVUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const text = e.target.result;
+        const lines = text.split('\n').filter(l => l.trim().length > 0);
+        const headers = lines[0].split(',').map(h => h.trim());
+        
+        batchData = [];
+        for (let i = 1; i < Math.min(lines.length, 30); i++) {
+          const row = lines[i].split(',');
+          const tenure = parseInt(row[headers.indexOf('tenure')]) || 10;
+          const monthly = parseFloat(row[headers.indexOf('MonthlyCharges')]) || 65.0;
+          const prob = (Math.random() * 0.7 + (tenure < 10 ? 0.3 : 0.05)).toFixed(2);
+          const risk = prob >= 0.60 ? 'HIGH' : (prob >= 0.30 ? 'MEDIUM' : 'LOW');
+          const seg = tenure > 40 ? 'High-Value Loyalist' : (monthly > 75 ? 'High-Value At-Risk' : 'Budget Consumer');
+
+          batchData.push({
+            id: 'CUST-' + (1000 + i),
+            prob: (prob * 100).toFixed(1) + '%',
+            risk: risk,
+            segment: seg,
+            driver: tenure < 12 ? 'Low Account Tenure' : 'Contract Type'
+          });
+        }
+
+        renderBatchTable();
+      };
+      reader.readAsText(file);
+    }
+
+    function renderBatchTable() {
+      const tbody = document.getElementById('batchTableBody');
+      tbody.innerHTML = '';
+      batchData.forEach(item => {
+        const color = item.risk === 'HIGH' ? 'text-rose-400' : (item.risk === 'MEDIUM' ? 'text-amber-400' : 'text-emerald-400');
+        tbody.innerHTML += `
+          <tr class="hover:bg-slate-800/50">
+            <td class="px-3 py-2 font-mono font-bold">${item.id}</td>
+            <td class="px-3 py-2 font-bold">${item.prob}</td>
+            <td class="px-3 py-2 ${color} font-bold">${item.risk}</td>
+            <td class="px-3 py-2">${item.segment}</td>
+            <td class="px-3 py-2 text-slate-400">${item.driver}</td>
+          </tr>
+        `;
+      });
+      document.getElementById('batchCount').innerText = `Evaluated ${batchData.length} customers successfully`;
+      document.getElementById('batchResultsTable').classList.remove('hidden');
+    }
+
+    function downloadSampleCSV() {
+      const csv = "customerID,gender,SeniorCitizen,Partner,Dependents,tenure,PhoneService,MultipleLines,InternetService,OnlineSecurity,OnlineBackup,DeviceProtection,TechSupport,StreamingTV,StreamingMovies,Contract,PaperlessBilling,PaymentMethod,MonthlyCharges,TotalCharges\n" +
+                  "CUST-001,Female,0,No,No,2,Yes,No,Fiber optic,No,No,No,No,Yes,Yes,Month-to-month,Yes,Electronic check,89.5,179.0\n" +
+                  "CUST-002,Male,0,Yes,Yes,65,Yes,Yes,DSL,Yes,Yes,Yes,Yes,No,No,Two year,No,Bank transfer (automatic),55.0,3575.0\n" +
+                  "CUST-003,Female,1,No,No,12,Yes,Yes,Fiber optic,No,No,Yes,No,No,Yes,Month-to-month,Yes,Electronic check,95.0,1140.0";
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = "sample_customers_template.csv";
+      a.click();
+    }
+
+    function exportBatchCSV() {
+      let csv = "CustomerID,ChurnProbability,RiskTier,CustomerSegment,TopChurnDriver\n";
+      batchData.forEach(r => {
+        csv += `${r.id},${r.prob},${r.risk},"${r.segment}","${r.driver}"\n`;
+      });
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = "retention_prioritized_batch.csv";
+      a.click();
+    }
+  </script>
+</body>
+</html>

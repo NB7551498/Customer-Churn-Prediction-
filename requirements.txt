@@ -1,4 +1,4 @@
-﻿# Core Data & ML
+# Core Data & ML
 pandas>=2.0.0
 numpy>=1.24.0
 scipy>=1.10.0
@@ -9,10 +9,19 @@ pyarrow>=14.0.0
 # Optional Gradient Boosting (falls back to HistGradientBoosting if absent)
 xgboost>=2.0.0
 
+# Explainability
+shap>=0.44.0
+numba>=0.59.0   # required by shap's clustering utilities
+
 # FastAPI Serving Layer
 fastapi>=0.100.0
 uvicorn[standard]>=0.23.0
 pydantic>=2.0.0
+python-dotenv>=1.0.0
+
+# Dashboard
+streamlit>=1.30.0
+requests>=2.31.0
 
 # Testing & Code Quality
 pytest>=7.4.0
@@ -22,4 +31,3 @@ ruff>=0.1.0
 # Visualizations (EDA & Reports)
 matplotlib>=3.7.0
 seaborn>=0.12.0
-streamlit>=1.30.0
