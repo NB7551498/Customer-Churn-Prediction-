@@ -21,12 +21,20 @@ from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-# Try importing LightGBM, fallback to GradientBoosting if needed
+# Try importing LightGBM and XGBoost, fallback to GradientBoosting if needed
 try:
     from lightgbm import LGBMClassifier
     HAS_LIGHTGBM = True
 except ImportError:
     HAS_LIGHTGBM = False
+
+try:
+    from xgboost import XGBClassifier
+    HAS_XGBOOST = True
+except ImportError:
+    HAS_XGBOOST = False
+
+from src.mlops import tracker
 
 # Structured logging
 logging.basicConfig(
@@ -210,6 +218,16 @@ def get_candidate_models() -> Dict[str, object]:
             verbose=-1,
         )
 
+    if HAS_XGBOOST:
+        models["XGBoost"] = XGBClassifier(
+            n_estimators=150,
+            max_depth=5,
+            learning_rate=0.08,
+            scale_pos_weight=2.7,
+            eval_metric="logloss",
+            random_state=42,
+        )
+
     return models
 
 
@@ -281,6 +299,21 @@ def evaluate_candidate_models(
             name, mean_auc, mean_recall, mean_f1, float(np.mean(praucs))
         )
 
+        # Log fold evaluation to MLOps tracker
+        tracker.log_run(
+            run_name=f"CV_{name.replace(' ', '_')}",
+            model_name=name,
+            params={"model_type": name, "cv_folds": 5},
+            metrics={
+                "accuracy": round(float(np.mean(accs)), 4),
+                "precision": round(float(np.mean(precs)), 4),
+                "recall": round(mean_recall, 4),
+                "f1_score": round(mean_f1, 4),
+                "roc_auc": round(mean_auc, 4),
+                "pr_auc": round(float(np.mean(praucs)), 4),
+            },
+        )
+
     df_results = pd.DataFrame(results_list).sort_values(by="ROC-AUC", ascending=False)
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     df_results.to_csv(REPORTS_DIR / "model_benchmark_comparison.csv", index=False)
@@ -324,11 +357,31 @@ def run_training_pipeline(
     logger.info("Fitting final production pipeline (%s) on complete training set (%d rows)...", best_name, len(X_train))
     final_pipeline.fit(X_train, y_train)
 
+    # Fit and serialize all candidate pipelines for comparison
+    all_models: Dict[str, Pipeline] = {}
+    for name, clf in candidate_models.items():
+        pipe = Pipeline([
+            ("preprocessor", preprocessor),
+            ("classifier", clf),
+        ])
+        pipe.fit(X_train, y_train)
+        all_models[name] = pipe
+
     # Serialize artifacts
     model_dir.mkdir(parents=True, exist_ok=True)
     joblib.dump(final_pipeline, model_dir / "pipeline.joblib")
     joblib.dump(final_pipeline, model_dir / "best_model.pkl")
-    logger.info("Pipeline serialized to %s and %s", model_dir / "pipeline.joblib", model_dir / "best_model.pkl")
+    joblib.dump(all_models, model_dir / "all_models.pkl")
+    logger.info("Pipelines serialized to %s, %s, and %s", model_dir / "pipeline.joblib", model_dir / "best_model.pkl", model_dir / "all_models.pkl")
+
+    # Record production release to MLOps tracker
+    tracker.log_run(
+        run_name=f"PROD_{best_name.replace(' ', '_')}",
+        model_name=best_name,
+        params={"model_type": best_name, "stage": "production"},
+        metrics={"status": 1.0},
+        artifacts=[model_dir / "pipeline.joblib", model_dir / "all_models.pkl"],
+    )
 
     return final_pipeline, benchmark_df
 

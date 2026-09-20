@@ -318,3 +318,36 @@ def test_predict_batch_csv(client):
     assert "ChurnProbability" in content
     assert "RiskTier" in content
     assert "CUST-1" in content
+
+
+def test_customer_by_id_endpoint(client):
+    """GET /customers/{customer_id} returns full customer retention analysis."""
+    response = client.get("/customers/7590-VHVEG")
+    assert response.status_code == 200
+    data = response.json()
+    assert "customer_id" in data
+    assert "churn_probability" in data
+    assert "risk_tier" in data
+    assert "segmentation" in data
+    assert "top_churn_drivers" in data
+    assert "retention_playbook" in data
+
+
+def test_model_info_slash_route(client):
+    """GET /model/info alias returns algorithm and version metadata."""
+    response = client.get("/model/info")
+    assert response.status_code == 200
+    data = response.json()
+    assert "version" in data
+    assert "algorithm" in data
+    assert "optimal_threshold" in data
+
+
+def test_monitoring_report_endpoint(client):
+    """GET /monitoring/report returns latest drift evaluation."""
+    response = client.get("/monitoring/report")
+    assert response.status_code == 200
+    data = response.json()
+    assert "overall_status" in data
+    assert "retraining_recommended" in data
+

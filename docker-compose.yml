@@ -1,24 +1,29 @@
-﻿# ==============================================================================
-# Docker Compose: Customer Churn Prediction System
-# Orchestrates FastAPI REST API (port 8000) & Streamlit UI (port 8501)
+# ==============================================================================
+# Docker Compose: ChurnGuard AI Enterprise Platform
+# Multi-container orchestration:
+# 1. backend: FastAPI REST serving layer (port 8000)
+# 2. frontend: Streamlit executive retention dashboard (port 8501)
+# 3. mlflow: MLflow experiment tracking & model registry server (port 5000)
+# 4. monitoring: Continuous PSI & KS statistical drift detector
 # ==============================================================================
 
 version: "3.8"
 
 services:
   # ----------------------------------------------------------------------------
-  # FastAPI REST Inference Service
+  # 1. Backend REST API Service
   # ----------------------------------------------------------------------------
-  api:
+  backend:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: churn-api-service
+    container_name: churn-backend
     ports:
       - "8000:8000"
     environment:
       - PYTHONUNBUFFERED=1
       - PORT=8000
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 15s
@@ -29,26 +34,79 @@ services:
     networks:
       - churn-network
 
+  # Backward compatibility alias
+  api:
+    extends:
+      service: backend
+
   # ----------------------------------------------------------------------------
-  # Streamlit Interactive Retention Web Dashboard
+  # 2. Frontend Streamlit Executive Dashboard
   # ----------------------------------------------------------------------------
-  ui:
+  frontend:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: churn-ui-service
+    container_name: churn-frontend
     command: ["streamlit", "run", "app/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
     ports:
       - "8501:8501"
     environment:
       - PYTHONUNBUFFERED=1
-      - API_URL=http://api:8000
+      - API_URL=http://backend:8000
     depends_on:
-      api:
+      backend:
         condition: service_healthy
     restart: unless-stopped
     networks:
       - churn-network
+
+  # Backward compatibility alias
+  ui:
+    extends:
+      service: frontend
+
+  # ----------------------------------------------------------------------------
+  # 3. MLflow Tracking Server
+  # ----------------------------------------------------------------------------
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:latest
+    container_name: churn-mlflow
+    ports:
+      - "5000:5000"
+    command: >
+      mlflow server
+      --backend-store-uri sqlite:///mlflow.db
+      --default-artifact-root /mlflow/artifacts
+      --host 0.0.0.0
+      --port 5000
+    volumes:
+      - mlflow-data:/mlflow
+    restart: unless-stopped
+    networks:
+      - churn-network
+
+  # ----------------------------------------------------------------------------
+  # 4. Data Drift & Health Monitor
+  # ----------------------------------------------------------------------------
+  monitoring:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: churn-monitoring
+    command: ["python", "-m", "src.monitoring"]
+    environment:
+      - PYTHONUNBUFFERED=1
+      - BACKEND_URL=http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - churn-network
+
+volumes:
+  mlflow-data:
+    driver: local
 
 networks:
   churn-network:

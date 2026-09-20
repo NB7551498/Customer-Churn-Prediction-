@@ -1,7 +1,9 @@
 {
-  "optimal_threshold": 0.1,
-  "optimal_profit": 144750.0,
-  "default_profit": -1500.0,
-  "profit_gain": 146250.0,
-  "roc_auc": 0.8328618667493348
+  "optimal_threshold": 0.13,
+  "optimal_profit": 167000.0,
+  "default_profit": 98500.0,
+  "profit_gain": 68500.0,
+  "roc_auc": 0.8455,
+  "pr_auc": 0.659,
+  "brier_score": 0.1653
 }

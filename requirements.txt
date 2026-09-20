@@ -18,6 +18,12 @@ fastapi>=0.100.0
 uvicorn[standard]>=0.23.0
 pydantic>=2.0.0
 python-dotenv>=1.0.0
+python-multipart>=0.0.6
+bcrypt>=4.0.0
+PyJWT>=2.8.0
+
+# MLOps & Tracking
+mlflow>=2.10.0
 
 # Dashboard
 streamlit>=1.30.0

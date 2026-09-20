@@ -1,4 +1,4 @@
-name: CI — Lint, Test, Docker Build
+name: CI/CD — Quality Gate, Pytest, Docker Build
 
 on:
   push:
@@ -8,10 +8,10 @@ on:
 
 jobs:
   # ──────────────────────────────────────────────
-  # Job 1: Lint + Test
+  # Job 1: Lint, Test & Model Quality Gate
   # ──────────────────────────────────────────────
   test:
-    name: Lint & Pytest
+    name: Lint, Test & Model Quality Gate
     runs-on: ubuntu-latest
 
     steps:
@@ -35,13 +35,29 @@ jobs:
       - name: Run Pytest suite
         run: pytest -v --tb=short
 
+      - name: Model Quality Gate (Assert ROC-AUC >= 0.80, PR-AUC >= 0.60)
+        run: |
+          python -c "
+          import json
+          with open('reports/evaluation_metrics.json') as f:
+              data = json.load(f)
+          roc_auc = data['metrics_at_default_threshold_0_50']['roc_auc']
+          pr_auc = data['metrics_at_default_threshold_0_50']['pr_auc']
+          brier = data['metrics_at_default_threshold_0_50']['brier_score']
+          print(f'Model Quality Gate: ROC-AUC={roc_auc}, PR-AUC={pr_auc}, Brier={brier}')
+          assert roc_auc >= 0.80, f'ROC-AUC {roc_auc} below threshold 0.80'
+          assert pr_auc >= 0.60, f'PR-AUC {pr_auc} below threshold 0.60'
+          assert brier <= 0.20, f'Brier score {brier} exceeds threshold 0.20'
+          print('>>> Model Quality Gate PASSED successfully! <<<')
+          "
+
   # ──────────────────────────────────────────────
-  # Job 2: Docker Build + Smoke Test
+  # Job 2: Docker Build & Service Smoke Test
   # ──────────────────────────────────────────────
   docker:
     name: Docker Build & Health Smoke Test
     runs-on: ubuntu-latest
-    needs: test          # only run if lint+tests pass
+    needs: test          # only run if lint, tests, and quality gate pass
 
     steps:
       - name: Checkout repository
@@ -69,11 +85,11 @@ jobs:
           echo "API status: $STATUS"
           [ "$STATUS" = "healthy" ] || [ "$STATUS" = "degraded" ]
 
-      - name: Smoke test /model-info
-        run: curl -sf http://localhost:8000/model-info | python3 -c "import sys,json; d=json.load(sys.stdin); assert 'version' in d"
+      - name: Smoke test /model/info
+        run: curl -sf http://localhost:8000/model/info | python3 -c "import sys,json; d=json.load(sys.stdin); assert 'version' in d"
 
-      - name: Smoke test /metrics
-        run: curl -sf http://localhost:8000/metrics | python3 -c "import sys,json; d=json.load(sys.stdin); assert 'models' in d"
+      - name: Smoke test /monitoring/report
+        run: curl -sf http://localhost:8000/monitoring/report | python3 -c "import sys,json; d=json.load(sys.stdin); assert 'overall_status' in d"
 
       - name: Stop container
         if: always()

@@ -1,11 +1,12 @@
 """
 ChurnGuard AI — Customer Segmentation Module.
-Applies K-Means clustering (k=4) on customer tenure, financial spend, and
-protection service adoption to identify actionable customer personas:
-1. High-Value Loyalists
-2. High-Value At-Risk
-3. Budget Consumers
-4. Unsettled Onboarders
+Applies K-Means clustering (k=5) on customer tenure, financial spend, and
+service adoption to identify 5 business personas:
+1. Loyal Customers
+2. Price Sensitive
+3. High Value / High Risk
+4. New Customers
+5. At-Risk Customers
 """
 
 import logging
@@ -21,28 +22,34 @@ logger = logging.getLogger("churn.segmentation")
 
 SEGMENT_METADATA = {
     0: {
-        "name": "High-Value Loyalists",
-        "description": "Long-tenure subscribers with high recurring spend and extensive service adoption. Extremely low churn probability.",
+        "name": "Loyal Customers",
+        "description": "Long-tenure subscribers with steady recurring spend and extensive service adoption. Extremely low churn probability.",
         "risk_profile": "Very Low",
         "icon": "shield-check",
     },
     1: {
-        "name": "High-Value At-Risk",
-        "description": "Subscribers with high monthly charges (often premium fiber) but low tenure and few support add-ons. High churn vulnerability.",
+        "name": "Price Sensitive",
+        "description": "Subscribers on lower or basic tiers, highly sensitive to price increases and bill fluctuations.",
+        "risk_profile": "Medium",
+        "icon": "wallet",
+    },
+    2: {
+        "name": "High Value / High Risk",
+        "description": "Subscribers with high monthly charges (often premium fiber) on flexible month-to-month contracts. High revenue at risk.",
         "risk_profile": "High",
         "icon": "alert-triangle",
     },
-    2: {
-        "name": "Budget Consumers",
-        "description": "Price-sensitive subscribers on basic phone or DSL tiers with low monthly spend and consistent tenure.",
-        "risk_profile": "Low",
-        "icon": "wallet",
-    },
     3: {
-        "name": "Unsettled Onboarders",
-        "description": "New subscribers in their first 1–6 months on flexible month-to-month contracts. High early drop-off rate.",
-        "risk_profile": "Very High",
+        "name": "New Customers",
+        "description": "Subscribers in their first 1–6 months of onboarding. Vulnerable to early cancellation if onboarding is friction-heavy.",
+        "risk_profile": "High",
         "icon": "user-plus",
+    },
+    4: {
+        "name": "At-Risk Customers",
+        "description": "Subscribers exhibiting high churn signals: low support protection, manual payment issues, and escalating dissatisfaction.",
+        "risk_profile": "Critical",
+        "icon": "flame",
     },
 }
 
@@ -53,7 +60,7 @@ DEFAULT_SEGMENT_MODEL_PATH = Path("models/kmeans_segmentation.joblib")
 class CustomerSegmenter:
     """Encapsulates K-Means clustering and persona mapping."""
 
-    def __init__(self, n_clusters: int = 4, random_state: int = 42):
+    def __init__(self, n_clusters: int = 5, random_state: int = 42):
         self.n_clusters = n_clusters
         self.random_state = random_state
         self.scaler = StandardScaler()
@@ -69,44 +76,52 @@ class CustomerSegmenter:
         self.kmeans.fit(X_scaled)
         self.is_fitted = True
 
-        # Map cluster centers deterministically based on tenure and monthly spend
+        # Map cluster centers deterministically
         centers = self.kmeans.cluster_centers_
+        raw_centers = self.scaler.inverse_transform(centers)
+
         tenure_idx = SEGMENTATION_FEATURES.index("tenure")
         charges_idx = SEGMENTATION_FEATURES.index("MonthlyCharges")
-
-        raw_centers = self.scaler.inverse_transform(centers)
+        support_idx = SEGMENTATION_FEATURES.index("support_protection_index")
 
         ranked = []
         for cid, center in enumerate(raw_centers):
             t = center[tenure_idx]
             m = center[charges_idx]
-            ranked.append((cid, t, m))
+            s = center[support_idx]
+            ranked.append((cid, t, m, s))
 
-        # Rank into canonical personas:
-        # Highest tenure + highest charges -> High-Value Loyalists (0)
-        # Lowest tenure + highest charges -> High-Value At-Risk (1)
-        # Lowest charges -> Budget Consumers (2)
-        # Lowest tenure + moderate charges -> Unsettled Onboarders (3)
+        # 0: Loyal: Max tenure
         sorted_by_tenure = sorted(ranked, key=lambda x: x[1], reverse=True)
-        loyalist_cid = sorted_by_tenure[0][0]
+        loyal_cid = sorted_by_tenure[0][0]
 
-        remaining = [r for r in ranked if r[0] != loyalist_cid]
-        sorted_by_charges = sorted(remaining, key=lambda x: x[2], reverse=True)
-        high_val_at_risk_cid = sorted_by_charges[0][0]
+        # 3: New: Min tenure
+        remaining1 = [r for r in ranked if r[0] != loyal_cid]
+        sorted_by_min_tenure = sorted(remaining1, key=lambda x: x[1])
+        new_cid = sorted_by_min_tenure[0][0]
 
-        remaining2 = [r for r in remaining if r[0] != high_val_at_risk_cid]
-        budget_cid = sorted(remaining2, key=lambda x: x[2])[0][0]
+        # 2: High Value / High Risk: highest monthly charges among remaining
+        remaining2 = [r for r in remaining1 if r[0] != new_cid]
+        sorted_by_charges = sorted(remaining2, key=lambda x: x[2], reverse=True)
+        high_val_cid = sorted_by_charges[0][0]
 
-        remaining3 = [r for r in remaining2 if r[0] != budget_cid]
-        onboarder_cid = remaining3[0][0]
+        # 1: Price Sensitive: lowest monthly charges among remaining
+        remaining3 = [r for r in remaining2 if r[0] != high_val_cid]
+        sorted_by_low_charges = sorted(remaining3, key=lambda x: x[2])
+        price_sens_cid = sorted_by_low_charges[0][0]
+
+        # 4: At-Risk: the remaining cluster
+        remaining4 = [r for r in remaining3 if r[0] != price_sens_cid]
+        at_risk_cid = remaining4[0][0] if remaining4 else 4
 
         self.cluster_order_map = {
-            loyalist_cid: 0,
-            high_val_at_risk_cid: 1,
-            budget_cid: 2,
-            onboarder_cid: 3,
+            loyal_cid: 0,
+            price_sens_cid: 1,
+            high_val_cid: 2,
+            new_cid: 3,
+            at_risk_cid: 4,
         }
-        logger.info("Canonical persona mapping established: %s", self.cluster_order_map)
+        logger.info("Canonical 5-persona mapping established: %s", self.cluster_order_map)
         return self
 
     def predict_segment(self, df: pd.DataFrame) -> Dict[str, Any]:
@@ -114,7 +129,7 @@ class CustomerSegmenter:
         X_seg = df[SEGMENTATION_FEATURES].copy()
         X_scaled = self.scaler.transform(X_seg)
         raw_cid = int(self.kmeans.predict(X_scaled)[0])
-        canonical_cid = self.cluster_order_map.get(raw_cid, raw_cid)
+        canonical_cid = self.cluster_order_map.get(raw_cid, raw_cid % 5)
         meta = SEGMENT_METADATA.get(canonical_cid, SEGMENT_METADATA[0])
 
         return {
@@ -131,7 +146,7 @@ class CustomerSegmenter:
         X_seg = df[SEGMENTATION_FEATURES].copy()
         X_scaled = self.scaler.transform(X_seg)
         raw_cids = self.kmeans.predict(X_scaled)
-        canonical_cids = [self.cluster_order_map.get(int(cid), int(cid)) for cid in raw_cids]
+        canonical_cids = [self.cluster_order_map.get(int(cid), int(cid) % 5) for cid in raw_cids]
         personas = [SEGMENT_METADATA.get(cid, SEGMENT_METADATA[0])["name"] for cid in canonical_cids]
         df_out["segment_id"] = canonical_cids
         df_out["persona"] = personas
@@ -145,16 +160,23 @@ def train_and_save_segmenter(
     """Train segmentation model on raw dataset and save artifact."""
     from src.train import engineer_features
 
+    # If data/customer_churn.csv doesn't exist, check parent or alternative
+    if not data_path.exists():
+        if Path("../telco_customer_churn.csv").exists():
+            data_path = Path("../telco_customer_churn.csv")
+        elif Path("telco_customer_churn.csv").exists():
+            data_path = Path("telco_customer_churn.csv")
+
     df = pd.read_csv(data_path)
     df["TotalCharges"] = pd.to_numeric(df["TotalCharges"].astype(str).str.strip(), errors="coerce").fillna(0.0)
     df = engineer_features(df)
 
-    segmenter = CustomerSegmenter(n_clusters=4, random_state=42)
+    segmenter = CustomerSegmenter(n_clusters=5, random_state=42)
     segmenter.fit(df)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(segmenter, output_path)
-    logger.info("Saved CustomerSegmenter to %s", output_path)
+    logger.info("Saved 5-cluster CustomerSegmenter to %s", output_path)
     return segmenter
 
 
